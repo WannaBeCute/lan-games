@@ -57,7 +57,7 @@ async function settle(ms) { await sleep(ms || 220); }
 
 (async function main() {
   console.log('\n== A. 静态资源 ==');
-  for (const p of ['/', '/tank/', '/gomoku/', '/tank/main.js', '/js/shared/tankcore.js', '/css/app.css']) {
+  for (const p of ['/', '/tank/', '/gomoku/', '/tank/main.js', '/tank/shared/tankcore.js', '/shared/app.css']) {
     try {
       const r = await fetch(HTTP + p);
       ok('GET ' + p, r.status === 200, 'HTTP ' + r.status);

@@ -16,7 +16,7 @@ var GUIDE =
   '这里不是启动入口。\n\n' +
   '正确启动方式：\n' +
   '  1) 双击项目根目录的「启动游戏.bat」  （推荐）\n' +
-  '  2) 或在命令行执行：  node server\\server.cjs\n\n' +
+  '  2) 或在命令行执行：  node platform\\server\\server.cjs\n\n' +
   '启动后浏览器访问： http://localhost:8080';
 
 /* Node 环境：直接转发到真正的服务端 */

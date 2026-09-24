@@ -1,7 +1,16 @@
 'use strict';
 /**
- * 机房小游戏服务端 —— 零 npm 依赖（只用 Node 内置模块）
- * 启动: node server/server.js  [--port 8080]
+ * 机房小游戏 —— 平台主机（零 npm 依赖，只用 Node 内置模块）
+ *
+ * 主机只做三件事，**不含任何游戏规则**：
+ *   1) 提供静态资源（主页 + 各游戏的客户端）
+ *   2) 装配 WebSocket，把消息按各游戏"自己声明"的路由分发过去
+ *   3) 驱动各游戏模块的 tick（有 step/broadcast 的才跑）
+ *
+ * 具体玩法都在 games/<名字>/ 里。新增一个游戏 = 新建一个文件夹，
+ * 主机自动发现，不用回来改这个文件。
+ *
+ * 启动: node platform/server/server.cjs [--port 8080]
  */
 const http = require('http');
 const fs = require('fs');
@@ -10,11 +19,10 @@ const os = require('os');
 const crypto = require('crypto');
 
 const ws = require('./ws');
-const TankHub = require('./tank-room');
-const GomokuHub = require('./gomoku-room');
 
-const ROOT = path.resolve(__dirname, '..');
-const PUBLIC_DIR = path.join(ROOT, 'public');
+const ROOT = path.resolve(__dirname, '..', '..');            // 仓库根
+const WEB_DIR = path.join(ROOT, 'platform', 'web');          // 平台前端（主页 + 通用库）
+const GAMES_DIR = path.join(ROOT, 'games');                  // 各游戏模块
 
 /* ---------------- 参数 ---------------- */
 function readPort() {
@@ -26,7 +34,23 @@ function readPort() {
 }
 const PORT = readPort();
 
-/* ---------------- 静态文件 ---------------- */
+/* ============================================================
+ *  静态资源：多个根，按 URL 前缀挂载（前缀长的优先）
+ *    /shared/*        平台通用库与样式（platform/web/shared）
+ *    /                平台主页（platform/web）
+ *    /tank/shared/*   坦克内核（games/tank/shared）
+ *    /tank/*          坦克客户端（games/tank/client）
+ *    /gomoku/*        五子棋客户端（games/gomoku/client）
+ *  每个游戏把自己的 client/ 挂到 /<名字>/ 下，互不干扰。
+ * ============================================================ */
+const MOUNTS = [
+  { prefix: '/shared/', dir: path.join(WEB_DIR, 'shared') },
+  { prefix: '/', dir: WEB_DIR },
+  { prefix: '/tank/shared/', dir: path.join(GAMES_DIR, 'tank', 'shared') },
+  { prefix: '/tank/', dir: path.join(GAMES_DIR, 'tank', 'client') },
+  { prefix: '/gomoku/', dir: path.join(GAMES_DIR, 'gomoku', 'client') }
+].sort((a, b) => b.prefix.length - a.prefix.length);   // 长前缀优先匹配
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -49,16 +73,29 @@ const MIME = {
   '.map': 'application/json; charset=utf-8'
 };
 
-function safeResolve(urlPath) {
+/** 把一个 URL 映射到磁盘文件；不在任何挂载点内 → null */
+function mapToFile(urlPath) {
   let p = decodeURIComponent(urlPath.split('?')[0].split('#')[0]);
-  if (p === '/' || p === '') p = '/index.html';
-  const full = path.join(PUBLIC_DIR, path.normalize(p).replace(/^([/\\])+/, ''));
-  if (!full.startsWith(PUBLIC_DIR)) return null;
+  if (p.charAt(0) !== '/') p = '/' + p;
+
+  let hit = null;
+  for (let i = 0; i < MOUNTS.length; i++) {
+    const m = MOUNTS[i];
+    if (p === m.prefix.slice(0, -1) || p.indexOf(m.prefix) === 0) { hit = m; break; }
+  }
+  if (!hit) return null;
+
+  let rest = p.slice(hit.prefix.length);
+  if (p === hit.prefix.slice(0, -1)) rest = '';   // 访问 "/tank" 也当作 "/tank/"
+  if (rest === '' || rest.charAt(rest.length - 1) === '/') rest += 'index.html';
+
+  const full = path.normalize(path.join(hit.dir, rest));
+  if (full !== hit.dir && full.indexOf(hit.dir + path.sep) !== 0) return null;   // 防目录穿越
   return full;
 }
 
 function serveStatic(req, res) {
-  let file = safeResolve(req.url || '/');
+  const file = mapToFile(req.url || '/');
   if (!file) { res.writeHead(403); res.end('403'); return; }
 
   fs.stat(file, (err, st) => {
@@ -118,7 +155,6 @@ function send(client, obj) {
   try { client.conn.send(JSON.stringify(obj)); } catch (e) { /* noop */ }
 }
 
-/* ---------------- Hub ---------------- */
 const ctx = {
   send,
   clients,
@@ -126,78 +162,111 @@ const ctx = {
   listOnline: () => Array.from(clients.values()).map(c => ({ name: c.name, code: c.inviteCode, ip: c.ip }))
 };
 
-const tankHub = new TankHub(ctx);
-const gomokuHub = new GomokuHub(ctx);
+/* ============================================================
+ *  装配各游戏模块（自动发现 games/<名字>/server/room.js）
+ *  模块约定（都可选，有就用，没有就跳过）：
+ *    Hub.routes  : { 消息类型: Hub 方法名 }
+ *    Hub.title   : 显示名
+ *    Hub.entry   : 访问入口（如 /tank/）
+ *    hub.stats() : 给 /api/status 的统计
+ *    hub.onClose(client) / hub.onRename(client) : 生命周期钩子
+ *    hub.step(dt) / hub.broadcast(dt)          : 需要按帧推进的游戏才实现
+ * ============================================================ */
+function loadGameModules() {
+  let names = [];
+  try {
+    names = fs.readdirSync(GAMES_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+  } catch (e) { names = []; }
 
-/* ---------------- 消息路由 ---------------- */
-function handleMessage(client, msg) {
-  if (!msg || typeof msg !== 'object') return;
-  switch (msg.t) {
-    /* 通用 */
-    case 'ping': send(client, { t: 'pong', ts: msg.ts, now: Date.now() }); return;
-    case 'hello':
-      if (typeof msg.name === 'string') {
-        const next = msg.name.slice(0, 12).trim();
-        // 玩家在设置里改了昵称：房间列表 / 对局里的名字都要立刻跟着变
-        if (next && next !== client.name) {
-          client.name = next;
-          tankHub.onRename(client);
-          gomokuHub.onRename(client);
-        }
-      }
-      send(client, {
-        t: 'hello', id: client.id, name: client.name, ip: client.ip,
-        inviteCode: client.inviteCode, serverTime: Date.now()
-      });
-      return;
-
-    /* 坦克大战 */
-    case 'tank.create': tankHub.create(client, msg); return;
-    case 'tank.join': tankHub.join(client, msg); return;
-    case 'tank.leave': tankHub.leave(client); return;
-    case 'tank.config': tankHub.config(client, msg); return;
-    case 'tank.ready': tankHub.setReady(client, msg); return;
-    case 'tank.bots': tankHub.setBots(client, msg); return;
-    case 'tank.rounds': tankHub.setRounds(client, msg); return;
-    case 'tank.lives': tankHub.setLives(client, msg); return;
-    case 'tank.selfDamage': tankHub.setSelfDamage(client, msg); return;
-    case 'tank.powerups': tankHub.setPowerups(client, msg); return;
-    case 'tank.start': tankHub.start(client); return;
-    case 'tank.input': tankHub.input(client, msg); return;
-    case 'tank.teleport': tankHub.teleport(client, msg); return;   // 仅测试（WB_TEST_HOOKS=1）
-    case 'tank.rematch': tankHub.rematch(client); return;
-
-    /* 五子棋 */
-    case 'gomoku.register': gomokuHub.register(client); return;
-    case 'gomoku.invite': gomokuHub.invite(client, msg); return;
-    case 'gomoku.reply': gomokuHub.replyInvite(client, msg); return;
-    case 'gomoku.move': gomokuHub.move(client, msg); return;
-    case 'gomoku.undo': gomokuHub.undo(client); return;
-    case 'gomoku.hover': gomokuHub.hover(client, msg); return;
-    case 'gomoku.resign': gomokuHub.resign(client); return;
-    case 'gomoku.leave': gomokuHub.leave(client); return;
-    default: return;
+  const mods = [];
+  for (const name of names) {
+    const entry = path.join(GAMES_DIR, name, 'server', 'room.js');
+    if (!fs.existsSync(entry)) continue;
+    try {
+      mods.push({ name, Hub: require(entry) });
+    } catch (e) {
+      console.error('[game load failed]', name, e.message);
+    }
   }
+  return mods;
 }
 
-/* ---------------- 服务器 ---------------- */
+const games = [];                       // [{ name, title, entry, hub }]
+const routes = new Map();               // 消息类型 → (client, msg) => void
+
+for (const mod of loadGameModules()) {
+  const hub = new mod.Hub(ctx);
+  const title = mod.Hub.title || mod.name;
+  const entry = mod.Hub.entry || ('/' + mod.name + '/');
+  games.push({ name: mod.name, title, entry, hub });
+
+  const map = mod.Hub.routes || {};
+  for (const type of Object.keys(map)) {
+    const method = map[type];
+    if (typeof hub[method] !== 'function') {
+      console.error('[route skip]', type, '→', method, '不存在');
+      continue;
+    }
+    routes.set(type, (client, msg) => hub[method](client, msg));
+  }
+  console.log('[game] 已装配 ' + title + '  (' + Object.keys(map).length + ' 条消息路由)');
+}
+
+/* ---------------- 消息处理（通用部分 + 各游戏路由） ---------------- */
+function eachHub(fn) {
+  for (const g of games) { try { fn(g.hub, g); } catch (e) { console.error('[' + g.name + ']', e.message); } }
+}
+
+function handleMessage(client, msg) {
+  if (!msg || typeof msg !== 'object') return;
+
+  /* 通用：心跳 */
+  if (msg.t === 'ping') { send(client, { t: 'pong', ts: msg.ts, now: Date.now() }); return; }
+
+  /* 通用：握手 / 改名（改名要通知每个游戏刷新显示名） */
+  if (msg.t === 'hello') {
+    if (typeof msg.name === 'string') {
+      const next = msg.name.slice(0, 12).trim();
+      if (next && next !== client.name) {
+        client.name = next;
+        eachHub((hub) => { if (hub.onRename) hub.onRename(client); });
+      }
+    }
+    send(client, {
+      t: 'hello', id: client.id, name: client.name, ip: client.ip,
+      inviteCode: client.inviteCode, serverTime: Date.now()
+    });
+    return;
+  }
+
+  /* 其余交给「游戏自己声明的路由」 */
+  const fn = routes.get(msg.t);
+  if (fn) fn(client, msg);
+}
+
+/* ---------------- HTTP 服务器 ---------------- */
 const server = http.createServer((req, res) => {
   if (req.url && req.url.startsWith('/api/status')) {
+    const stats = {};
+    eachHub((hub) => { if (hub.stats) Object.assign(stats, hub.stats()); });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({
+    res.end(JSON.stringify(Object.assign({
       online: clients.size,
-      tankRooms: tankHub.roomCount(),
-      gomokuMatches: gomokuHub.matchCount(),
       uptime: Math.round(process.uptime()),
       port: PORT,
       urls: LAN_URLS,
-      addresses: LAN
-    }));
+      addresses: LAN,
+      games: games.map(g => ({ name: g.name, title: g.title, entry: g.entry }))
+    }, stats)));
     return;
   }
   serveStatic(req, res);
 });
 
+/* ---------------- WebSocket ---------------- */
 ws.attach(server, (conn, req) => {
   const id = nextClientId++;
   const client = {
@@ -228,12 +297,11 @@ ws.attach(server, (conn, req) => {
   conn.on('close', () => {
     clients.delete(id);
     if (client.inviteCode) byInviteCode.delete(client.inviteCode);
-    try { tankHub.onClose(client); } catch (e) { /* noop */ }
-    try { gomokuHub.onClose(client); } catch (e) { /* noop */ }
+    eachHub((hub) => { if (hub.onClose) hub.onClose(client); });
   });
 });
 
-/* ---------------- 主循环（60Hz 权威模拟） ---------------- */
+/* ---------------- 主循环：只驱动"需要按帧推进"的游戏（目前只有坦克） ---------------- */
 const STEP = 1 / 60;
 let last = Date.now();
 let acc = 0;
@@ -245,10 +313,10 @@ setInterval(() => {
   acc += dt;
   let guard = 0;
   while (acc >= STEP && guard++ < 8) {
-    tankHub.step(STEP);
+    eachHub((hub) => { if (hub.step) hub.step(STEP); });
     acc -= STEP;
   }
-  tankHub.broadcast(dt);
+  eachHub((hub) => { if (hub.broadcast) hub.broadcast(dt); });
 }, 8);
 
 /* 心跳 */
@@ -286,7 +354,7 @@ const LAN_URLS = LAN.map(a => 'http://' + a.address + ':' + PORT);
 server.listen(PORT, '0.0.0.0', () => {
   const line = '='.repeat(64);
   console.log(line);
-  console.log('  机房小游戏服务器已启动     坦克大战  +  五子棋');
+  console.log('  机房小游戏服务器已启动     ' + games.map(g => g.title).join('  +  '));
   console.log(line);
   console.log('');
   console.log('  【本机打开】  http://localhost:' + PORT);
@@ -298,7 +366,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('  【提示】没有检测到局域网 IP，请确认本机已连接机房网络/网线。');
   }
   console.log('');
-  console.log('  游戏入口：  /tank/  坦克大战        /gomoku/  五子棋');
+  console.log('  游戏入口（主页里也能点）：');
+  games.forEach(g => console.log('      ' + String(g.entry).padEnd(12) + g.title));
   console.log('  关闭本窗口 或按 Ctrl+C 即可停止服务');
   console.log('');
   console.log('  别的电脑打不开？99% 是 Windows 防火墙拦了入站端口：');

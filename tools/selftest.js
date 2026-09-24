@@ -5,7 +5,7 @@
  *       子弹上限、特殊武器、AI 对战稳定性、快照体积。
  */
 const path = require('path');
-const T = require(path.join(__dirname, '..', 'public/js/shared/tankcore.js'));
+const T = require(path.join(__dirname, '..', 'games/tank/shared/tankcore.js'));
 
 let failures = 0;
 function check(name, cond, extra) {

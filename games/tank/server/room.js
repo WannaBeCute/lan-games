@@ -4,7 +4,7 @@
  * 规则：房主设置对局局数（默认 20，上限 999），每局结束后累计战绩，
  *       所有局打完后结算总排名。
  */
-const TankCore = require('../public/js/shared/tankcore.js');
+const TankCore = require('../shared/tankcore.js');
 
 /**
  * 单局时限涉及两个"变量"，职责必须严格分开，别再混成一坨：
@@ -56,6 +56,8 @@ class TankHub {
   }
 
   roomCount() { return this.rooms.size; }
+  /** 给主机 /api/status 用的统计（每个游戏自己声明要暴露什么） */
+  stats() { return { tankRooms: this.rooms.size }; }
 
   /* ---------- 房间管理 ---------- */
   create(client, msg) {
@@ -651,5 +653,30 @@ class TankHub {
     console.log('[tank] 房间', room.code, '全部', room.rounds, '局结束');
   }
 }
+
+/**
+ * 这个游戏**自己声明**自己的消息路由：消息类型 → Hub 上的方法名。
+ * 主机（platform/server/server.cjs）只负责装配，不需要知道 "tank.create" 这类细节，
+ * 这样新增/改名游戏消息时只改这个文件，不会牵动主机。
+ */
+TankHub.title = '坦克大战';       // 游戏自己声明的显示名（主机/主页用它，不写死）
+TankHub.entry = '/tank/';         // 访问入口
+
+TankHub.routes = {
+  'tank.create': 'create',
+  'tank.join': 'join',
+  'tank.leave': 'leave',
+  'tank.config': 'config',
+  'tank.ready': 'setReady',
+  'tank.bots': 'setBots',
+  'tank.rounds': 'setRounds',
+  'tank.lives': 'setLives',
+  'tank.selfDamage': 'setSelfDamage',
+  'tank.powerups': 'setPowerups',
+  'tank.start': 'start',
+  'tank.input': 'input',
+  'tank.teleport': 'teleport',   // 仅测试：WB_TEST_HOOKS=1 时才生效
+  'tank.rematch': 'rematch'
+};
 
 module.exports = TankHub;

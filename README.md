@@ -28,13 +28,13 @@
 start.bat
 
 :: 方式二：命令行
-node server/server.cjs                     :: 默认 8080 端口
-node server/server.cjs --port 9000
+node platform/server/server.cjs                     :: 默认 8080 端口
+node platform/server/server.cjs --port 9000
 ```
 
-> **请勿直接双击 `server\server.js`。** 那个文件不是入口，只是防误点提示；
+> **请勿直接双击 `platform\server\server.js`。** 那个文件不是入口，只是防误点提示；
 > 双击 `.js` 会被 Windows 自带的脚本宿主（JScript）打开，弹出 `语法错误 800A03EA`。
-> 正确的入口是 `server\server.cjs`。
+> 正确的入口是 `platform\server\server.cjs`。
 >
 > 首次运行若 Windows 弹出防火墙提示，请选择「允许访问」，否则其他电脑连不上。
 > 若是机房统一管理，可让管理员放行该端口，或用 `--port` 换一个已放行的端口。
@@ -241,21 +241,25 @@ game/
 ├─ start.bat                  同上（英文名，供命令行/快捷方式使用）
 ├─ 开放防火墙端口.bat          别的电脑连不上时，右键「以管理员身份运行」放行端口
 ├─ package.json               无任何依赖，仅提供 npm start / npm test
-├─ server/                    服务端（纯 Node 内置模块）
-│  ├─ server.cjs              真正的入口：HTTP 静态服务 + 客户端注册 + IP 邀请码 + 60Hz 主循环 + 消息路由
-│  ├─ server.js               防误点提示（被双击时给正常人话，Node 下会自动转发到 server.cjs）
-│  ├─ ws.js                   自己实现的 WebSocket 服务端（RFC6455：握手/掩码/分片/ping-pong/close）
-│  ├─ tank-room.js            坦克房间、局数制对局、服务端权威模拟、30Hz 状态广播
-│  └─ gomoku-room.js          五子棋邀请、落子、悔棋（无需对方同意）、落子预览转发、胜负判定
-├─ public/
-│  ├─ index.html              主页（两个游戏入口 + 设置）
-│  ├─ css/app.css             公共样式
-│  ├─ js/
-│  │  ├─ common/core.js       设置存储、键位、WebAudio 音效、设置弹窗、Toast
-│  │  ├─ common/net.js        WebSocket 客户端（自动重连 / RTT 统计 / 消息分发）
-│  │  └─ shared/tankcore.js   ★ 坦克内核（浏览器与 Node 共用同一份代码）
-│  ├─ tank/                   坦克大战：index.html / tank.css / render.js / main.js
-│  └─ gomoku/                 五子棋：index.html / gomoku.css / ai.js / main.js
+├─ platform/                  ★ 平台层：与具体游戏无关的部分
+│  ├─ server/
+│  │  ├─ server.cjs           真正的入口：静态多根挂载 + 客户端注册 + IP 邀请码 + 60Hz 主循环 + 消息分发
+│  │  ├─ server.js            防误点提示（被双击时给正常人话，Node 下会自动转发到 server.cjs）
+│  │  └─ ws.js                自己实现的 WebSocket 服务端（RFC6455：握手/掩码/分片/ping-pong/close）
+│  └─ web/
+│     ├─ index.html           主页（两个游戏入口 + 设置）
+│     └─ shared/              跨游戏通用库与样式
+│        ├─ app.css           公共样式
+│        ├─ core.js           设置存储、键位、WebAudio 音效、设置弹窗、Toast
+│        └─ net.js            WebSocket 客户端（自动重连 / RTT 统计 / 消息分发）
+├─ games/                     ★ 游戏层：一个游戏一个文件夹，改动互不影响
+│  ├─ tank/                   坦克大战（自包含）
+│  │  ├─ server/room.js       房间、局数制对局、服务端权威模拟、30Hz 状态广播
+│  │  ├─ shared/tankcore.js   ★ 内核（浏览器与 Node 共用同一份代码）
+│  │  └─ client/              index.html / tank.css / render.js / main.js
+│  └─ gomoku/                 五子棋（自包含）
+│     ├─ server/room.js       邀请、落子、悔棋（无需对方同意）、落子预览转发、胜负判定
+│     └─ client/              index.html / gomoku.css / ai.js / main.js
 └─ tools/
    ├─ selftest.js             内核自检（迷宫地图、旋转弹道、子弹反弹/寿命/自伤、子弹上限、AI 对战、性能）
    ├─ nettest.js              联机自检（房间、准备状态、AI 开关、局数、同步、悔棋、胜负、断线清理）
@@ -263,6 +267,29 @@ game/
    ├─ uitest.js               界面自检（无头 Chrome 实测三个页面）
    └─ shots/                  自检截图
 ```
+
+### 为什么要分 platform / games
+
+**平台层（`platform/`）**：只做「跑游戏」这件事 —— 静态资源、WebSocket、客户端注册、主循环，
+**一行游戏规则都没有**。
+
+**游戏层（`games/<名字>/`）**：每个游戏完全自包含，各占一个文件夹：
+
+| 位置 | 作用 |
+| --- | --- |
+| `games/<名>/client/` | 该游戏的网页（HTML/CSS/JS） |
+| `games/<名>/shared/` | 该游戏「浏览器 + Node 共用」的内核（只有需要时才建） |
+| `games/<名>/server/room.js` | 该游戏的服务端逻辑 |
+
+**隔离是怎么保证的**：
+
+- **消息路由各写各的**：每个游戏的 `room.js` 用 `Hub.routes = { 'xxx.yyy': '方法名' }`
+  自己声明能收哪些消息，主机启动时自动装配成路由表 —— 主机里**看不到任何 `tank.*` / `gomoku.*` 字样**。
+- **静态资源按前缀挂载**：`games/tank/client/` 挂到 `/tank/`、`games/gomoku/client/` 挂到 `/gomoku/`，
+  两个游戏的页面、样式、脚本互不引用。
+- **自动发现**：主机扫描 `games/` 下带 `server/room.js` 的文件夹并挂载。
+  **新增一个游戏 = 新建一个文件夹**，不用改平台层任何代码。
+- **只有需要逐帧推进的游戏才实现 `step/broadcast`**（目前只有坦克），其余游戏主机不会去驱动。
 
 ### 联机为什么没延迟
 
@@ -287,7 +314,7 @@ npm test                                     # 前两项
 > 跑 `nettest.js` 前建议用 `WB_ROUND_LIMIT=6` 启动服务器（把单局时限压到 6 秒），
 > 否则「打满局数 → 总结算」那一段要等满 150 秒一局：
 > ```bash
-> set WB_ROUND_LIMIT=6 && node server/server.cjs --port 8080
+> set WB_ROUND_LIMIT=6 && node platform/server/server.cjs --port 8080
 > ```
 
 > 职责划分：`ROUND_LIMIT`（tankcore 常量，默认 150 秒）是游戏真实单局时长，联机/本地/HUD 都读它，正式服运行时任何地方都不应改写它。
@@ -309,7 +336,7 @@ npm test                                     # 前两项
 **Q：双击 `server\server.js` 弹窗报「语法错误 / 代码 800A03EA / Microsoft JScript 编译错误」？**
 那是因为直接双击了 `.js` 文件 —— Windows 会用它自带的脚本宿主（JScript）去执行，
 而 JScript 不认识现代 JS 语法（`const` 等），所以在第 5 行就报错了。**这不是游戏出错。**
-正确做法：双击根目录的 **`启动游戏.bat`**，或在命令行执行 `node server\server.cjs`。
+正确做法：双击根目录的 **`启动游戏.bat`**，或在命令行执行 `node platform\server\server.cjs`。
 （`server\server.js` 现在只是一个防误点提示文件，双击它只会弹出一句说明，不会再报错。）
 
 **Q：双击 bat 窗口一闪就没了？**
@@ -335,9 +362,9 @@ npm test                                     # 前两项
 坦克对局中离开会立即判负（剩余玩家继续打完剩余局数）；五子棋会通知对手「对方已掉线」。服务器会自动回收房间与对局，不会残留。
 
 **Q：能不能改地图大小 / 单局时限 / 生命数？**
-地图大小与单局时限在 `public/js/shared/tankcore.js` 顶部的常量里（`TILE`、`ROUND_LIMIT`、`RESPAWN_DELAY` 等），
+地图大小与单局时限在 `games/tank/shared/tankcore.js` 顶部的常量里（`TILE`、`ROUND_LIMIT`、`RESPAWN_DELAY` 等），
 服务端与客户端共用这份文件，改一处即可全局生效。
 **生命数不用改代码**：联机房主在房间里直接选 1~5 条（默认 1 条），单机 / 本地双人在开局面板上选。
 
 **Q：想改服务器端口？**
-`node server/server.cjs --port 9000`，或设环境变量 `PORT=9000`。
+`node platform/server/server.cjs --port 9000`，或设环境变量 `PORT=9000`。

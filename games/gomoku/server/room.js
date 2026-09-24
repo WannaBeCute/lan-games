@@ -29,6 +29,8 @@ class GomokuHub {
   }
 
   matchCount() { return this.matches.size; }
+  /** 给主机 /api/status 用的统计（每个游戏自己声明要暴露什么） */
+  stats() { return { gomokuMatches: this.matches.size }; }
 
   /* ---------- 注册 ---------- */
   register(client) {
@@ -374,5 +376,20 @@ class GomokuHub {
     return null;
   }
 }
+
+GomokuHub.title = '五子棋';        // 游戏自己声明的显示名
+GomokuHub.entry = '/gomoku/';     // 访问入口
+
+/** 这个游戏自己声明的消息路由（消息类型 → Hub 方法名），主机只做装配 */
+GomokuHub.routes = {
+  'gomoku.register': 'register',
+  'gomoku.invite': 'invite',
+  'gomoku.reply': 'replyInvite',
+  'gomoku.move': 'move',
+  'gomoku.undo': 'undo',
+  'gomoku.hover': 'hover',
+  'gomoku.resign': 'resign',
+  'gomoku.leave': 'leave'
+};
 
 module.exports = GomokuHub;

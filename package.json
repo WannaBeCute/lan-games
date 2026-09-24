@@ -2,10 +2,10 @@
   "name": "lab-mini-games",
   "version": "1.0.0",
   "private": true,
-  "description": "机房小游戏：坦克大战 + 五子棋。零 npm 依赖的 Node 服务端，支持局域网联机（WebSocket 协议自行实现）",
-  "main": "server/server.cjs",
+  "description": "机房小游戏平台：坦克大战 + 五子棋。零 npm 依赖的 Node 服务端，局域网联机（WebSocket 协议自行实现）。代码按 platform/ + games/<游戏>/ 分层，各游戏相互隔离",
+  "main": "platform/server/server.cjs",
   "scripts": {
-    "start": "node server/server.cjs",
+    "start": "node platform/server/server.cjs",
     "test": "node tools/selftest.js && node tools/nettest.js",
     "test:core": "node tools/selftest.js",
     "test:net": "node tools/nettest.js",

@@ -29,7 +29,7 @@ echo.
 echo     本游戏需要先安装 Node.js：  https://nodejs.org
 echo     安装时一路点下一步即可，装完后重新运行本文件。
 echo.
-echo     注意：请勿直接双击 server\server.js
+echo     注意：请勿直接双击 platform\server\server.js
 echo           Windows 会用系统自带的脚本宿主打开它，从而报语法错误。
 echo.
 pause
@@ -42,7 +42,7 @@ echo.
 echo   正在启动服务，关闭本窗口即停止服务...
 echo.
 
-"%NODE_EXE%" "%~dp0server\server.cjs" %*
+"%NODE_EXE%" "%~dp0platform\server\server.cjs" %*
 
 echo.
 echo   服务器已停止。
