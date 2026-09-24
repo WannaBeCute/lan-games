@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>坦克大战 · 机房小游戏</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/tank/tank.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 坦克大战</span></div>
+  <div class="topbar-right">
+    <span class="net-badge" id="netBadge">未连接</span>
+    <button class="btn tiny ghost" id="btnSettings">⚙ 设置</button>
+    <a class="btn tiny ghost" href="/">返回主页</a>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ============ 主菜单 ============ -->
+  <section class="screen" id="scr-menu">
+    <div class="menu-card">
+      <h1>坦克大战</h1>
+      <p class="sub">↑前进 ↓后退 ←左转 →右转 · 单键开火 · <b>子弹上限 5 发</b> · 子弹撞墙会反弹、会打中自己 · 迷宫地图</p>
+      <div class="preview"><canvas id="previewArt" width="700" height="90"></canvas></div>
+      <div class="mode-grid">
+        <button class="mode-btn" data-mode="single">
+          <span class="ico">🎯</span>
+          <b>单人游戏</b>
+          <em>对战 AI，生存挑战，比拼击杀数</em>
+        </button>
+        <button class="mode-btn" data-mode="local">
+          <span class="ico">👥</span>
+          <b>多人游戏</b>
+          <em>同一台电脑双人对战（P2 用 W 前进 / S 后退 / A 左转 / D 右转）</em>
+        </button>
+        <button class="mode-btn" data-mode="online">
+          <span class="ico">🌐</span>
+          <b>在线联机游戏</b>
+          <em>4 位房间号，2~4 人，全员准备后房主开始</em>
+        </button>
+      </div>
+      <div class="best" id="bestScore"></div>
+    </div>
+  </section>
+
+  <!-- ============ 单人设置 ============ -->
+  <section class="screen hidden" id="scr-single">
+    <div class="menu-card">
+      <h1>单人游戏</h1>
+      <p class="sub">AI 坦克会不断出现并进攻。看看你能击毁多少辆！</p>
+      <div class="mode-grid three">
+        <button class="mode-btn" data-level="0"><b>简单</b><em>AI 反应较慢，最多同时 3 辆</em></button>
+        <button class="mode-btn" data-level="1"><b>普通</b><em>AI 会主动追击，最多同时 4 辆</em></button>
+        <button class="mode-btn" data-level="2"><b>困难</b><em>AI 枪法很准，最多同时 5 辆</em></button>
+      </div>
+      <div class="rounds-set">
+        <label>每局生命数</label>
+        <input type="number" class="field" id="singleLives" min="1" max="5" value="1">
+        <span class="hint">默认 1 条，最多 5 条（被击毁即少一条命）</span>
+      </div>
+      <div class="row" style="justify-content:center;gap:14px">
+        <button class="btn ghost" data-back>返回</button>
+        <button class="btn ghost" id="btnSettings2">⚙ 设置键位 / 音量</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 本地双人设置 ============ -->
+  <section class="screen hidden" id="scr-local">
+    <div class="menu-card">
+      <h1>本地双人对战</h1>
+      <p class="sub">P1 使用方向键 + 开火键，P2 使用 W A S D + 开火键（键位可在设置中修改）</p>
+      <div class="rounds-set">
+        <label>对局局数</label>
+        <input type="number" class="field" id="localRounds" min="1" max="999" value="20">
+        <span class="hint">默认 20 局，最多 999 局；全部打完后结算总排名</span>
+      </div>
+      <div class="rounds-set">
+        <label>每局生命数</label>
+        <input type="number" class="field" id="localLives" min="1" max="5" value="1">
+        <span class="hint">默认 1 条，最多 5 条</span>
+      </div>
+      <div class="keys-preview" id="localKeysPreview"></div>
+      <div class="row" style="justify-content:center;gap:14px">
+        <button class="btn ghost" data-back>返回</button>
+        <button class="btn primary" id="btnLocalStart">开始对战</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 在线联机 ============ -->
+  <section class="screen hidden" id="scr-online">
+    <div class="menu-card">
+      <h1>在线联机游戏</h1>
+      <p class="sub">新建房间后把 4 位房间号告诉同学，他们输入房间号即可加入</p>
+      <div class="online-grid">
+        <div class="panel">
+          <h3>新建房间</h3>
+          <p class="sub" style="margin:0 0 14px">成为房主，可设置对局局数并开始游戏</p>
+          <button class="btn primary block big" id="btnCreateRoom">新建房间</button>
+        </div>
+        <div class="panel">
+          <h3>加入房间</h3>
+          <p class="sub" style="margin:0 0 14px">输入 4 位房间号（例如 1234）</p>
+          <div class="row">
+            <input class="field code-input" id="joinCode" maxlength="4" inputmode="numeric" placeholder="0000">
+            <button class="btn ok" id="btnJoinRoom">加入</button>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="justify-content:center">
+        <button class="btn ghost" data-back>返回</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 房间大厅 ============ -->
+  <section class="screen hidden" id="scr-lobby">
+    <div class="lobby">
+      <div class="lobby-head">
+        <div>
+          <div class="lbl">房间号（告诉同学加入）</div>
+          <div class="room-code" id="roomCode">----</div>
+        </div>
+        <div class="lobby-head-right">
+          <button class="btn tiny ghost" id="btnCopyCode">复制房间号</button>
+          <button class="btn tiny danger" id="btnLeaveRoom">退出房间</button>
+        </div>
+      </div>
+
+      <div class="lobby-body">
+        <div class="panel">
+          <h3>房间玩家 <span class="dim" id="roomCount">0/4</span></h3>
+          <ul class="player-list" id="playerList"></ul>
+
+          <button class="btn block hidden" id="btnReady">我已准备好</button>
+
+          <div class="rounds-set compact">
+            <label>对局局数</label>
+            <input type="number" class="field" id="roomRounds" min="1" max="999" value="20">
+            <span class="hint" id="roundsHint">默认 20 局 · 最多 999 局</span>
+          </div>
+
+          <div class="rounds-set compact">
+            <label>每局生命数</label>
+            <input type="number" class="field" id="roomLives" min="1" max="5" value="1">
+            <span class="hint" id="livesHint">默认 1 条 · 最多 5 条</span>
+          </div>
+
+          <div class="switch-row">
+            <label class="switch">
+              <input type="checkbox" id="chkBots">
+              <span class="track"><span class="knob"></span></span>
+              <span class="switch-label">补充 AI 坦克</span>
+            </label>
+            <div class="hint" id="botHint">默认关闭：只有你 1 人时需要打开它才能开局</div>
+          </div>
+
+          <div class="switch-row">
+            <label class="switch">
+              <input type="checkbox" id="chkSelfDamage">
+              <span class="track"><span class="knob"></span></span>
+              <span class="switch-label">子弹会伤到自己</span>
+            </label>
+            <div class="hint" id="selfDamageHint">默认关闭：反弹回来、或朝前追上自己的子弹都不会打伤自己</div>
+          </div>
+
+          <div class="pu-set">
+            <label>场上掉落的道具</label>
+            <div class="pu-picks" id="puPicks"></div>
+            <div class="hint" id="puHint">默认全选；取消勾选后场上不再掉落该道具（至少保留一种）</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>我的坦克</h3>
+          <div class="cfg-row">
+            <label>颜色</label>
+            <div class="swatches" id="colorPick"></div>
+          </div>
+          <div class="cfg-row">
+            <label>涂装</label>
+            <div class="styles" id="stylePick"></div>
+          </div>
+          <div class="tank-preview"><canvas id="cfgPreview" width="120" height="120"></canvas></div>
+
+          <h3 style="margin-top:22px">我的键位</h3>
+          <p class="hint" style="margin-top:-8px">点击按键框后按下新键即可修改（Esc 取消）</p>
+          <div class="key-list" id="lobbyKeys"></div>
+        </div>
+      </div>
+
+      <div class="lobby-foot">
+        <span class="dim" id="lobbyTip"></span>
+        <button class="btn primary big" id="btnStartGame" disabled>开始游戏</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 游戏画面 ============ -->
+  <section class="screen hidden" id="scr-game">
+    <div class="game-top">
+      <span class="chip" id="hRound">第 1 / 20 局</span>
+      <span class="chip" id="hTimer">⏱ 3:00</span>
+      <span class="chip" id="hLives">❤❤❤</span>
+      <span class="chip" id="hKills">击杀 0</span>
+      <span class="chip dim" id="hMode"></span>
+      <span class="spacer"></span>
+      <button class="btn tiny ghost" id="btnPause">暂停 (Esc)</button>
+      <button class="btn tiny danger" id="btnQuit">退出</button>
+    </div>
+
+    <div class="game-layout">
+      <div class="canvas-wrap" id="cvWrap">
+        <canvas id="cv"></canvas>
+        <div class="overlay hidden" id="overlay"><div class="overlay-inner" id="overlayInner"></div></div>
+      </div>
+      <aside class="side">
+        <div class="panel side-panel">
+          <h3>战绩</h3>
+          <ul class="score-list" id="scoreList"></ul>
+        </div>
+        <div class="panel side-panel">
+          <h3>特殊武器</h3>
+          <ul class="power-list" id="powerList"><li class="dim">暂无（对局一段时间后随机掉落）</li></ul>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+</div>
+
+<div class="wb-toasts" id="wb-toasts"></div>
+
+<script src="/js/shared/tankcore.js"></script>
+<script src="/js/common/core.js"></script>
+<script src="/js/common/net.js"></script>
+<script src="/tank/render.js"></script>
+<script src="/tank/main.js"></script>
+</body>
+</html>

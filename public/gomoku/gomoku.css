@@ -1,0 +1,266 @@
+/* ===== 五子棋 =====
+   第一部分：页面结构布局
+   第二部分：传统木质棋盘主题（浅木色棋盘 + 深棕线条 + 纯黑/米白圆子，
+             不使用渐变发光、玻璃拟态、霓虹、粒子、3D，字体为楷体/宋体等衬线字体）
+*/
+
+/* ================= 1. 结构布局 ================= */
+.stage { max-width: 1120px; margin: 0 auto; padding: 22px 20px 40px; }
+.brand .crumb { color: var(--dim2); font-weight: 500; font-size: 14px; margin-left: 4px; }
+.screen { animation: fadeUp .2s ease; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.menu-card {
+  max-width: 720px; margin: 26px auto; padding: 34px 34px 30px; text-align: center;
+}
+.menu-card h1 { margin: 0 0 10px; }
+.menu-card .sub { margin: 0 0 24px; line-height: 1.8; }
+.mode-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.mode-btn { display: flex; flex-direction: column; gap: 4px; padding: 18px 20px; text-align: left; cursor: pointer; }
+.mode-btn .ico { font-size: 22px; margin-bottom: 4px; }
+.level-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; }
+.style-btn { padding: 7px 16px; cursor: pointer; font-size: 13px; }
+
+.invite-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 24px; text-align: left; }
+.invite-card { text-align: center; }
+.invite-card .lbl { font-size: 12.5px; letter-spacing: 1px; margin-bottom: 10px; }
+.code { font-size: 36px; font-weight: 800; letter-spacing: 8px; }
+.code.small-code { font-size: 22px; letter-spacing: 5px; }
+.invite-card .small { font-size: 12.5px; margin: 10px 0 0; line-height: 1.7; }
+.code-input { text-align: center; font-size: 26px; font-weight: 800; letter-spacing: 8px; text-transform: uppercase; }
+
+.play-layout { display: grid; grid-template-columns: minmax(0, auto) 288px; justify-content: center; align-items: start; }
+.board-wrap { position: relative; display: inline-block; }
+#board { display: block; cursor: pointer; touch-action: none; }
+.side { display: flex; flex-direction: column; gap: 16px; }
+.side h3 { font-size: 14px; margin: 0 0 12px; }
+
+.players { display: flex; flex-direction: column; gap: 9px; margin-bottom: 12px; }
+.pl { display: flex; align-items: center; gap: 11px; padding: 10px 12px; }
+.pl .stone { width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto; }
+.pl .nm { font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl .uni { font-size: 11.5px; }
+.pl .tag { font-size: 11px; padding: 2px 8px; }
+.turn-line { font-size: 14px; font-weight: 700; text-align: center; padding: 8px; }
+.turn-line.undo-ok { outline: 2px dashed rgba(178, 58, 46, .75); outline-offset: 1px; }
+.meta { margin-top: 10px; font-size: 12.5px; text-align: center; line-height: 1.8; }
+.meta .hint-line { font-size: 12px; opacity: .85; }
+.chk { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 12px; cursor: pointer; }
+
+.overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 20px; animation: fadeUp .18s ease;
+}
+.overlay-inner { text-align: center; max-width: 92%; }
+.overlay h2 { margin: 0 0 10px; font-size: 26px; }
+.overlay p { font-size: 14px; margin: 0 0 18px; }
+.obtns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.ask-mask { position: fixed; inset: 0; z-index: 150; display: flex; align-items: center; justify-content: center; padding: 20px; animation: fadeIn .16s ease; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.ask-box { width: 100%; max-width: 400px; padding: 26px; text-align: center; }
+.ask-box h3 { margin: 0 0 10px; font-size: 19px; }
+.ask-box p { font-size: 14px; margin: 0 0 20px; line-height: 1.7; }
+.ask-box .obtns { display: flex; gap: 12px; justify-content: center; }
+
+@media (max-width: 940px) {
+  .play-layout { grid-template-columns: 1fr; }
+  .side { flex-direction: row; flex-wrap: wrap; }
+  .side .panel { flex: 1 1 220px; min-width: 0; }
+}
+
+/* ================= 2. 传统木质棋盘主题 ================= */
+body.gomoku-theme {
+  --table-1: #6b4a2c;
+  --table-2: #4a3120;
+  --wood-face: #8a6437;
+  --wood-face-2: #785430;
+  --wood-line: #5c3f22;
+  --wood-btn: #c89b5e;
+  --wood-btn-hi: #d8ad72;
+  --ink: #f6e9d2;
+  --ink-2: #e3cfae;
+  --ink-3: #c4aa82;
+  --board: #deb887;
+
+  font-family: "楷体", "KaiTi", "STKaiti", "宋体", "SimSun", "Songti SC", Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  min-height: 100vh;
+  background-color: var(--table-2);
+  background-image:
+    repeating-linear-gradient(91deg, rgba(0, 0, 0, .05) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(88deg, rgba(255, 255, 255, .025) 0 1px, transparent 1px 17px),
+    radial-gradient(1100px 640px at 50% -6%, #7d5533 0%, #5b3f27 46%, #3f2a1a 100%);
+  background-attachment: fixed;
+}
+body.gomoku-theme::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    repeating-linear-gradient(179deg, transparent 0 46px, rgba(0, 0, 0, .07) 46px 48px, transparent 48px 96px),
+    radial-gradient(1200px 800px at 50% 50%, transparent 55%, rgba(0, 0, 0, .3) 100%);
+}
+body.gomoku-theme .topbar,
+body.gomoku-theme .stage { position: relative; z-index: 1; }
+
+/* ---------- 顶栏 ---------- */
+.gomoku-theme .topbar {
+  background: linear-gradient(180deg, #6d4a2b, #573a22);
+  border-bottom: 2px solid #3f2a18;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .25);
+  backdrop-filter: none;
+}
+.gomoku-theme .brand { font-weight: 700; letter-spacing: 2px; color: var(--ink); }
+.gomoku-theme .brand .logo { background: #c89b5e; border: 1px solid #8a6132; border-radius: 4px; box-shadow: none; }
+.gomoku-theme .brand .crumb { color: var(--ink-3); }
+.gomoku-theme .net-badge {
+  background: rgba(255, 255, 255, .06); border: 1px solid #8a6132; color: var(--ink-3); border-radius: 4px;
+}
+.gomoku-theme .net-badge.ok { color: #cfe3b6; border-color: #6f7f4e; background: rgba(120, 150, 80, .16); }
+.gomoku-theme .net-badge.wait { color: #e6cf9a; border-color: #9a7d43; background: rgba(180, 145, 70, .16); }
+.gomoku-theme .net-badge.bad { color: #edb6a6; border-color: #97604c; background: rgba(160, 80, 60, .16); }
+
+/* ---------- 按钮：木色圆角矩形 ---------- */
+.gomoku-theme .btn {
+  background: var(--wood-btn); border: 1px solid #8a6132; color: #3d2612;
+  border-radius: 8px; font-family: inherit; font-weight: 700; letter-spacing: 1px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .18); transition: background .14s ease;
+}
+.gomoku-theme .btn:hover { background: var(--wood-btn-hi); transform: none; }
+.gomoku-theme .btn:active { box-shadow: none; transform: translateY(1px); }
+.gomoku-theme .btn.primary { background: #ab753a; border-color: #7a4f21; color: #fdf3e2; }
+.gomoku-theme .btn.primary:hover { background: #b9813f; }
+.gomoku-theme .btn.ok { background: #8f9a5a; border-color: #66703c; color: #f7fbe9; }
+.gomoku-theme .btn.warn { background: #c08a3e; border-color: #8a6027; color: #33210c; }
+.gomoku-theme .btn.danger { background: #a8543f; border-color: #7d3a2a; color: #fdeee8; }
+.gomoku-theme .btn.danger:hover { background: #b66149; }
+.gomoku-theme .btn.ghost { background: #ece0c8; border-color: #b99a6a; color: #4a3018; }
+.gomoku-theme .btn.ghost:hover { background: #f3ead6; }
+.gomoku-theme .btn[disabled], .gomoku-theme .btn.disabled { opacity: .45; }
+
+/* ---------- 菜单 ---------- */
+.gomoku-theme .menu-card {
+  background: linear-gradient(180deg, #8d6739, #7a5630);
+  border: 3px solid #5a3d21; border-radius: 14px;
+  box-shadow: 0 10px 0 rgba(0, 0, 0, .22), inset 0 1px 0 rgba(255, 255, 255, .1);
+}
+.gomoku-theme .menu-card h1 { font-size: 36px; letter-spacing: 12px; color: #fdf1da; text-shadow: 0 2px 0 rgba(0, 0, 0, .3); }
+.gomoku-theme .menu-card .sub { color: var(--ink-2); font-size: 15px; }
+.gomoku-theme .menu-card .sub b { color: #ffe1a6; }
+
+.gomoku-theme .mode-btn {
+  background: #eadcc0; border: 2px solid #a5814c; border-radius: 10px; color: #3d2612;
+  transition: background .14s ease;
+}
+.gomoku-theme .mode-btn:hover { background: #f3e7cf; border-color: #8a6132; transform: none; }
+.gomoku-theme .mode-btn b { font-size: 19px; letter-spacing: 3px; }
+.gomoku-theme .mode-btn em { font-style: normal; color: #6d5030; font-size: 13.5px; }
+
+.gomoku-theme .level-row { color: var(--ink-2); }
+.gomoku-theme .style-btn {
+  background: #ece0c8; border: 1px solid #b99a6a; color: #4a3018; border-radius: 6px;
+  font-family: inherit; font-weight: 700; letter-spacing: 1px;
+}
+.gomoku-theme .style-btn.on { background: #ab753a; border-color: #7a4f21; color: #fdf3e2; }
+
+/* ---------- 联机邀请 ---------- */
+.gomoku-theme .invite-card .lbl { color: var(--ink-3); letter-spacing: 2px; }
+.gomoku-theme .code { color: #fff3dc; letter-spacing: 10px; text-shadow: 0 2px 0 rgba(0, 0, 0, .3); }
+.gomoku-theme .invite-card .small { color: var(--ink-3); }
+.gomoku-theme .code-input {
+  background: #f7efdd; border: 2px solid #a5814c; color: #3b2411; border-radius: 8px;
+  font-family: Georgia, "Times New Roman", "宋体", serif;
+}
+.gomoku-theme .code-input:focus { border-color: #7a4f21; box-shadow: none; outline: none; }
+
+/* ---------- 面板 ---------- */
+.gomoku-theme .panel {
+  background: linear-gradient(180deg, var(--wood-face), var(--wood-face-2));
+  border: 2px solid var(--wood-line); border-radius: 12px;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, .2), inset 0 1px 0 rgba(255, 255, 255, .08);
+  padding: 16px 18px;
+}
+.gomoku-theme .side h3, .gomoku-theme .panel h3 {
+  color: #fdf1da; letter-spacing: 3px;
+  border-bottom: 1px solid rgba(90, 61, 33, .8); padding-bottom: 8px;
+}
+
+/* ---------- 棋盘 ---------- */
+.gomoku-theme .play-layout { gap: 26px; }
+.gomoku-theme .board-wrap { line-height: 0; }
+.gomoku-theme #board {
+  border-radius: 4px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, .48), 0 0 0 1px rgba(60, 38, 18, .6);
+}
+.gomoku-theme .overlay { background: rgba(58, 38, 20, .84); border-radius: 4px; backdrop-filter: none; }
+.gomoku-theme .overlay h2 { letter-spacing: 6px; color: #fdf1da; }
+.gomoku-theme .overlay p { color: var(--ink-2); }
+
+/* ---------- 对局信息 ---------- */
+.gomoku-theme .players { gap: 8px; }
+.gomoku-theme .pl { background: #9a7343; border: 1px solid #5c3f22; border-radius: 8px; color: var(--ink); }
+.gomoku-theme .pl.active { background: #bf9457; border-color: #f0dcb4; box-shadow: none; color: #33200c; }
+.gomoku-theme .pl .nm { font-weight: 700; letter-spacing: 1px; }
+.gomoku-theme .pl .uni { color: rgba(255, 255, 255, .62); }
+.gomoku-theme .pl.active .uni { color: rgba(51, 32, 12, .72); }
+.gomoku-theme .pl .tag { background: #6f7f4e; border: 1px solid #58653c; color: #f4fbe6; border-radius: 4px; }
+.gomoku-theme .pl .stone.b { background: #111; border: 1px solid #000; box-shadow: none; }
+.gomoku-theme .pl .stone.w { background: #f7f3e8; border: 1px solid #b9ac90; box-shadow: none; }
+
+.gomoku-theme .turn-line {
+  background: #6f4f2c; border: 1px solid #553a1e; color: #ffe9bf; border-radius: 8px; letter-spacing: 2px;
+}
+.gomoku-theme .meta { color: var(--ink-3); }
+.gomoku-theme .chk { color: var(--ink-2); }
+.gomoku-theme .chk input { accent-color: #ab753a; }
+
+/* ---------- 询问弹窗 ---------- */
+.gomoku-theme .ask-mask { background: rgba(30, 20, 10, .76); backdrop-filter: none; }
+.gomoku-theme .ask-box {
+  background: linear-gradient(180deg, #8d6739, #7a5630);
+  border: 3px solid #5a3d21; border-radius: 12px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5);
+}
+.gomoku-theme .ask-box h3 { color: #fdf1da; letter-spacing: 3px; }
+.gomoku-theme .ask-box p { color: var(--ink-2); }
+
+/* ---------- 提示条 ---------- */
+.gomoku-theme .wb-toast {
+  background: #7a5630; border: 2px solid #5a3d21; color: #fdf1da; border-radius: 8px;
+  font-family: inherit; box-shadow: 0 6px 16px rgba(0, 0, 0, .4);
+}
+.gomoku-theme .wb-toast.err { border-color: #8e4632; color: #ffdcc9; }
+.gomoku-theme .wb-toast.ok { border-color: #6f7f4e; color: #f0f7dd; }
+
+/* ---------- 设置弹窗 ---------- */
+.gomoku-theme .wb-mask { background: rgba(30, 20, 10, .76); backdrop-filter: none; }
+.gomoku-theme .wb-dialog {
+  background: linear-gradient(180deg, #8a6437, #74512d);
+  border: 3px solid #5a3d21; border-radius: 14px; color: var(--ink);
+}
+.gomoku-theme .wb-dialog-head { border-bottom: 1px solid rgba(90, 61, 33, .9); }
+.gomoku-theme .wb-dialog-head h3 { letter-spacing: 3px; }
+.gomoku-theme .wb-x { color: var(--ink-2); border: 0; background: none; }
+.gomoku-theme .wb-x:hover { color: #fff; }
+.gomoku-theme .wb-dialog-foot { border-top: 1px solid rgba(90, 61, 33, .9); }
+.gomoku-theme .wb-sec h4 { color: #ffe9bf; letter-spacing: 2px; }
+.gomoku-theme .wb-hint, .gomoku-theme .wb-field label,
+.gomoku-theme .wb-lbl, .gomoku-theme .wb-check, .gomoku-theme .wb-keyrow span { color: var(--ink-2); }
+.gomoku-theme .wb-input {
+  background: #f7efdd; border: 2px solid #a5814c; color: #3b2411; border-radius: 8px; font-family: inherit;
+}
+.gomoku-theme .wb-input:focus { border-color: #7a4f21; box-shadow: none; }
+.gomoku-theme .wb-keycol { background: #6f4f2c; border: 1px solid #553a1e; border-radius: 8px; }
+.gomoku-theme .wb-keycol-title { color: #ffe9bf; }
+.gomoku-theme .wb-key {
+  background: #ece0c8; border: 1px solid #b99a6a; color: #3d2612; border-radius: 6px; font-family: inherit;
+}
+.gomoku-theme .wb-key:hover { border-color: #8a6132; }
+.gomoku-theme .wb-key.capturing { background: #ab753a; border-color: #7a4f21; color: #fdf3e2; }
+.gomoku-theme .wb-val { color: #ffe9bf; }
+.gomoku-theme input[type=range] { background: #5a3d21; }
+.gomoku-theme input[type=range]::-webkit-slider-thumb {
+  background: #d8ad72; border: 1px solid #8a6132; box-shadow: none;
+}

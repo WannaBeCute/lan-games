@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>五子棋 · 机房小游戏</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/gomoku/gomoku.css">
+</head>
+<body class="gomoku-theme">
+
+<div class="topbar">
+  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 五子棋</span></div>
+  <div class="topbar-right">
+    <span class="net-badge" id="netBadge">未连接</span>
+    <button class="btn tiny ghost" id="btnSettings">⚙ 设置</button>
+    <a class="btn tiny ghost" href="/">返回主页</a>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ============ 主菜单 ============ -->
+  <section class="screen" id="scr-menu">
+    <div class="menu-card">
+      <h1>五子棋</h1>
+      <p class="sub">传统规则：横、竖、斜任意方向先连成五子者获胜 · <b>每人一次悔棋</b><br>
+        <span class="dim small">悔棋不需要对方同意，只要对方还没应手就能撤回自己刚下的那一手</span></p>
+      <div class="mode-grid">
+        <button class="mode-btn" data-mode="ai">
+          <b>单人游戏</b>
+          <em>与电脑对弈，三档棋力可选</em>
+        </button>
+        <button class="mode-btn" data-mode="online">
+          <b>联机游戏</b>
+          <em>邀请制：输入对方邀请码即可开局</em>
+        </button>
+      </div>
+      <div class="level-row" id="levelRow">
+        <span class="dim">难度</span>
+        <button class="style-btn" data-level="0">简单</button>
+        <button class="style-btn on" data-level="1">普通</button>
+        <button class="style-btn" data-level="2">困难</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 联机 ============ -->
+  <section class="screen hidden" id="scr-online">
+    <div class="menu-card">
+      <h1>联机对局</h1>
+      <p class="sub">邀请制：把下面的邀请码给对方，或输入对方的邀请码发起邀请</p>
+
+      <div class="invite-grid">
+        <div class="panel invite-card">
+          <div class="lbl">我的邀请码（本机专属）</div>
+          <div class="code" id="myCode">------</div>
+          <div class="row" style="justify-content:center;gap:10px;margin-top:12px">
+            <button class="btn tiny ghost" id="btnCopyCode">复制邀请码</button>
+            <span class="dim" id="myIp"></span>
+          </div>
+          <p class="dim small">同名机房内每位同学的 IP 都会自动生成一个专属邀请码</p>
+        </div>
+
+        <div class="panel invite-card">
+          <div class="lbl">输入对方邀请码</div>
+          <input class="field code-input" id="inviteCode" maxlength="6" placeholder="ABC123">
+          <button class="btn primary block" id="btnInvite" style="margin-top:14px">发起邀请</button>
+          <p class="dim small" id="waitTip"></p>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:center;gap:12px">
+        <button class="btn ghost" data-back>返回</button>
+        <button class="btn ghost" id="btnCancelWait">取消邀请</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 对局 ============ -->
+  <section class="screen hidden" id="scr-play">
+    <div class="play-layout">
+      <div class="board-wrap">
+        <canvas id="board"></canvas>
+        <div class="overlay hidden" id="overlay"><div class="overlay-inner" id="overlayInner"></div></div>
+      </div>
+
+      <aside class="side">
+        <div class="panel">
+          <h3>对局信息</h3>
+          <div class="players" id="players"></div>
+          <div class="turn-line" id="turnLine">—</div>
+          <div class="meta" id="metaLine"></div>
+        </div>
+
+        <div class="panel">
+          <h3>操作</h3>
+          <button class="btn warn block" id="btnUndo" style="margin-bottom:10px">悔棋（剩 1 次）</button>
+          <button class="btn ghost block" id="btnNew" style="margin-bottom:10px">新开一局</button>
+          <button class="btn danger block" id="btnResign">认输</button>
+          <label class="chk"><input type="checkbox" id="chkNum"> 显示手数</label>
+          <label class="chk"><input type="checkbox" id="chkCoord" checked> 显示坐标</label>
+        </div>
+
+        <div class="panel" id="codePanel">
+          <h3>我的邀请码</h3>
+          <div class="code small-code" id="myCode2">------</div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+</div>
+
+<div class="wb-toasts" id="wb-toasts"></div>
+
+<script src="/js/common/core.js"></script>
+<script src="/js/common/net.js"></script>
+<script src="/gomoku/ai.js"></script>
+<script src="/gomoku/main.js"></script>
+</body>
+</html>
