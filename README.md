@@ -13,6 +13,9 @@
 同学浏览器输入该地址  →  主页选游戏  →  开玩
 ```
 
+> 想拿源码、或者想一起开发？仓库在 GitHub（公开）。克隆地址、加游戏的步骤、协作流程与自检清单
+> 见文末 **8. 获取代码 · 一起开发**。
+
 ---
 
 ## 1. 运行环境
@@ -391,3 +394,38 @@ npm test                                     # platformtest + selftest + nettest
 
 **Q：想改服务器端口？**
 `node platform/server/server.cjs --port 9000`，或设环境变量 `PORT=9000`。
+
+---
+
+## 8. 获取代码 · 一起开发
+
+仓库在 GitHub：**https://github.com/WannaBeCute/lan-games**（公开，可直接 clone / fork / 提 PR）。
+
+```bash
+git clone https://github.com/WannaBeCute/lan-games.git
+cd lan-games
+node platform/server/server.cjs        # 起服务端，浏览器打开 http://127.0.0.1:8080
+```
+
+想加一个新游戏：在 `games/` 下新建一个文件夹（里面有 `server/room.js`）就行，
+`platform/` 一行都不用改 —— 服务端会自动发现并装配、主页会自动多出一张卡片。
+契约、卡片声明（`Hub.title` / `Hub.order` / `Hub.card`）、最小模板，
+以及一段可直接发给同学或 AI 的提示词，都在 [`games/README.md`](games/README.md)。
+
+**提交改动前请跑一遍自检**（动了内核或服务端逻辑的尤其要跑）：
+
+```bash
+node tools/platformtest.js                      # 平台装配：契约、消息类型/前缀不撞车、卡片与主页
+node tools/selftest.js                          # 内核：地图、弹道、子弹反弹/寿命/自伤、AI、性能
+node tools/nettest.js ws://127.0.0.1:8080/ws    # 联机（服务端需带 WB_ROUND_LIMIT=6 WB_TEST_HOOKS=1 启动）
+node tools/roomtest.js http://127.0.0.1:8080    # 大厅端到端
+node tools/uitest.js http://127.0.0.1:8080      # 界面（无头 Chrome）
+```
+
+**协作流程**：从 `master` 开一个描述性分支（例如 `feat/snake`）→ 改完跑通自检 → 提 PR，
+在说明里写清改了什么、跑了哪些测试。**一个游戏只动 `games/<名字>/` 里的文件**；
+确实需要改 `platform/`（比如动服务端通用能力）时，先开个 Issue 说一声，免得和别人的改动撞车。
+
+> 项目有几条硬约定：**服务端零 npm 依赖**（只用 Node 内置模块）、**前端不用构建工具**
+> （传统 `<script>` + 全局命名空间）、**游戏之间必须隔离**（平台层不出现任何具体游戏的名字）。
+> 动手前先看 **5. 目录结构** 和 `games/README.md` 里的约定表。
