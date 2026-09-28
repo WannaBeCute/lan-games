@@ -1,7 +1,12 @@
 # 机房小游戏 · 坦克大战 & 五子棋
 
-两台可以在机房局域网里直接跑起来的小游戏。**服务端零 npm 依赖**（WebSocket 协议用 Node 内置模块自己实现），
+可以在机房局域网里直接跑起来的小游戏合集（目前两个：坦克大战、五子棋）。
+**服务端零 npm 依赖**（WebSocket 协议用 Node 内置模块自己实现），
 任何一台装了 Node.js 的 Win 电脑双击 `start.bat` 即可开服，其他电脑用浏览器打开地址就能玩。
+
+平台层与游戏层是分开的：**想再加一个游戏，只需要在 `games/` 下新建一个文件夹** ——
+服务端会自己发现、自己挂载，主页也会自动多出一张卡片，`platform/` 一行都不用改
+（约定与模板见 [`games/README.md`](games/README.md)，里面有段可直接发给同学或 AI 的提示词）。
 
 ```
 双击 start.bat  →  控制台会打印局域网地址（如 http://192.168.1.5:8080）
@@ -247,7 +252,7 @@ game/
 │  │  ├─ server.js            防误点提示（被双击时给正常人话，Node 下会自动转发到 server.cjs）
 │  │  └─ ws.js                自己实现的 WebSocket 服务端（RFC6455：握手/掩码/分片/ping-pong/close）
 │  └─ web/
-│     ├─ index.html           主页（两个游戏入口 + 设置）
+│     ├─ index.html           主页（**游戏卡片是脚本读 /api/status 渲染的**，新增游戏不用改这里）
 │     └─ shared/              跨游戏通用库与样式
 │        ├─ app.css           公共样式
 │        ├─ core.js           设置存储、键位、WebAudio 音效、设置弹窗、Toast
@@ -256,11 +261,13 @@ game/
 │  ├─ tank/                   坦克大战（自包含）
 │  │  ├─ server/room.js       房间、局数制对局、服务端权威模拟、30Hz 状态广播
 │  │  ├─ shared/tankcore.js   ★ 内核（浏览器与 Node 共用同一份代码）
-│  │  └─ client/              index.html / tank.css / render.js / main.js
+│  │  └─ client/              index.html / tank.css / render.js / main.js / card.svg
 │  └─ gomoku/                 五子棋（自包含）
 │     ├─ server/room.js       邀请、落子、悔棋（无需对方同意）、落子预览转发、胜负判定
-│     └─ client/              index.html / gomoku.css / ai.js / main.js
+│     └─ client/              index.html / gomoku.css / ai.js / main.js / card.svg
 └─ tools/
+   ├─ platformtest.js         ★ 平台自检（契约完整性、消息前缀不撞车、自动发现没漏没多、
+   │                             卡片插画存在、主页确实渲染出了卡片）
    ├─ selftest.js             内核自检（迷宫地图、旋转弹道、子弹反弹/寿命/自伤、子弹上限、AI 对战、性能）
    ├─ nettest.js              联机自检（房间、准备状态、AI 开关、局数、同步、悔棋、胜负、断线清理）
    ├─ roomtest.js             大厅端到端（真实浏览器建房 + 第二人加入 + 准备 + 开始）
@@ -289,6 +296,12 @@ game/
   两个游戏的页面、样式、脚本互不引用。
 - **自动发现**：主机扫描 `games/` 下带 `server/room.js` 的文件夹并挂载。
   **新增一个游戏 = 新建一个文件夹**，不用改平台层任何代码。
+- **主页卡片也自动出现**：主页里只有一个空容器 `#hubGrid`，卡片是脚本按 `/api/status` 渲染的；
+  标题、简介、标签、插画全部由游戏自己用 `Hub.title` / `Hub.card` 声明，
+  平台层（`platform/`）里找不到任何一个游戏的名字。
+- **撞车会被当面指出**：两个游戏注册了同一条消息类型时，主机保留先注册的那个，并在启动日志里打
+  `[route conflict]`，同时写进 `/api/status` 的 `routeConflicts` —— 不再像以前那样无声地互相顶掉。
+  共用同一个消息前缀、目录名撞上平台保留路径、卡片信息没声明，也都会以 `[game warn]` 列出来。
 - **只有需要逐帧推进的游戏才实现 `step/broadcast`**（目前只有坦克），其余游戏主机不会去驱动。
 
 > 想自己（或让 AI / 同学）加一个新游戏？看 **[`games/README.md`](games/README.md)** ——
@@ -307,24 +320,31 @@ game/
 ## 6. 自检与测试
 
 ```bash
+node tools/platformtest.js                   # 平台：契约完整性、消息类型/前缀不撞车、自动发现没漏没多、卡片与主页
 node tools/selftest.js                       # 内核：迷宫地图 / 旋转弹道 / 子弹反弹·寿命·自伤 / 子弹上限 / AI 对战 / 性能
 node tools/nettest.js ws://127.0.0.1:8080/ws # 联机：房间、准备状态、AI 开关、生命数、局数、同步、推进、悔棋、预览转发、胜负、断线清理
 node tools/roomtest.js http://127.0.0.1:8080 # 大厅：真实浏览器建房 + 第二人加入 + 准备 + 开始（端到端）
 node tools/uitest.js http://127.0.0.1:8080   # 界面：无头 Chrome 实测并输出截图到 tools/shots
-npm test                                     # 前两项
+npm test                                     # platformtest + selftest + nettest
 ```
 
-> 跑 `nettest.js` 前建议用 `WB_ROUND_LIMIT=6` 启动服务器（把单局时限压到 6 秒），
-> 否则「打满局数 → 总结算」那一段要等满 150 秒一局：
+> `platformtest.js` 会**自己拉起一个临时端口的服务端**，跑完自动关掉，所以在没有服务端在跑时也能单独执行；
+> 也可以 `node tools/platformtest.js http://127.0.0.1:8080` 去测已经在跑的那个。
+
+> 跑 `nettest.js` 前必须用下面两个环境变量启动服务器，**缺一不可**：
+> - `WB_ROUND_LIMIT=6` —— 把单局时限压到 6 秒，否则「打满局数 → 总结算」那一段要等满 150 秒一局；
+> - `WB_TEST_HOOKS=1` —— 打开 `tank.teleport` 这类只在测试环境生效的钩子。**少了它**，
+>   「子弹穿过草丛把草打薄」那一组用例会因为坦克挪不到指定位置而失败（看着像玩法坏了，其实只是钩子没开）。
 > ```bash
-> set WB_ROUND_LIMIT=6 && node platform/server/server.cjs --port 8080
+> set WB_ROUND_LIMIT=6 && set WB_TEST_HOOKS=1 && node platform/server/server.cjs --port 8080
 > ```
 
 > 职责划分：`ROUND_LIMIT`（tankcore 常量，默认 150 秒）是游戏真实单局时长，联机/本地/HUD 都读它，正式服运行时任何地方都不应改写它。
 > `WB_ROUND_LIMIT`（环境变量）仅供自动化测试压缩服务端单局时限，不回写内核常量，测试值不会泄漏到正式服。
 
-当前状态：**内核自检全通过**（迷宫空地 62%~70% ≥ 1/3、墙体占比 ≥ 30%、子弹反弹/自伤/寿命逐项验证）、
-**联机自检 92 项全通过**、**大厅端到端 19 项全通过**、**界面自检 57 项全通过**。
+当前状态（2026-09-28 全量实测）：**平台装配自检 47 项全通过**、**内核自检 86 项全通过**、
+**联机自检 118 项全通过**（服务端需以 `WB_ROUND_LIMIT=6` + `WB_TEST_HOOKS=1` 启动）、
+**大厅端到端 19 项全通过**、**界面自检 84 项全通过**。
 
 `/api/status` 可以随时看服务器状态：
 

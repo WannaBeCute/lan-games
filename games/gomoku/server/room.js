@@ -379,6 +379,19 @@ class GomokuHub {
 
 GomokuHub.title = '五子棋';        // 游戏自己声明的显示名
 GomokuHub.entry = '/gomoku/';     // 访问入口
+GomokuHub.order = 20;             // 主页卡片顺序（数字小的排前面）
+
+/** 主页卡片内容由游戏自己提供，平台只负责渲染，不认识"五子棋"这个词 */
+GomokuHub.card = {
+  desc: '传统五子棋规则，五子连珠即胜。支持与电脑对战，也支持邀请制联机对局。',
+  tags: [
+    '单人 / 联机邀请',
+    '每人 1 次悔棋 · 无需对方同意',
+    'IP 专属邀请码',
+    '三档 AI 难度'
+  ],
+  art: 'card.svg'
+};
 
 /** 这个游戏自己声明的消息路由（消息类型 → Hub 方法名），主机只做装配 */
 GomokuHub.routes = {

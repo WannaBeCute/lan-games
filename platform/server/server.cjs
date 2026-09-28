@@ -139,7 +139,8 @@ const byInviteCode = new Map();   // 邀请码 → client
 let nextClientId = 1;
 
 function inviteCodeFor(ip, salt) {
-  const h = crypto.createHash('md5').update('wb-gomoku|' + ip + '|' + salt).digest();
+  // 盐值保持中性：这里属于平台层，不该出现任何具体游戏的名字
+  const h = crypto.createHash('md5').update('wb-lan-game|' + ip + '|' + salt).digest();
   let s = '';
   for (let i = 0; i < 6; i++) s += CODE_ALPHABET[h[i] % CODE_ALPHABET.length];
   return s;
@@ -204,29 +205,95 @@ function loadGameModules() {
   return mods;
 }
 
-const games = [];                       // [{ name, title, entry, hub }]
+const games = [];                       // [{ name, title, entry, order, card, hub }]
 const routes = new Map();               // 消息类型 → (client, msg) => void
+const routeOwner = new Map();           // 消息类型 → 注册它的游戏目录名
+const routeConflicts = [];              // 同名消息被两个游戏抢（记录后保留先注册的）
+const gameWarnings = [];                // 契约上的问题：不致命，但会让"加游戏的人"踩坑
+
+/** 目录名会直接变成 URL 前缀，撞上平台保留路径会让静态挂载互相遮蔽 */
+const RESERVED_NAMES = new Set(['shared', 'api', 'platform', 'games', 'tools']);
 
 for (const mod of loadGameModules()) {
   const hub = new mod.Hub(ctx);
   const title = mod.Hub.title || mod.name;
   const entry = mod.Hub.entry || ('/' + mod.name + '/');
-  games.push({ name: mod.name, title, entry, hub });
+  const card = (mod.Hub.card && typeof mod.Hub.card === 'object') ? mod.Hub.card : null;
+  const order = Number.isFinite(mod.Hub.order) ? mod.Hub.order : 100;
+  games.push({ name: mod.name, title, entry, order, card, hub });
+
+  const warn = (msg) => {
+    gameWarnings.push({ game: mod.name, msg: msg });
+    console.warn('[game warn] ' + mod.name + '：' + msg);
+  };
+  if (RESERVED_NAMES.has(mod.name)) warn('目录名与平台保留路径同名，静态资源会被遮蔽，请换一个名字');
+  if (!mod.Hub.title) warn('没有声明 Hub.title，主页与日志会显示英文目录名');
+  if (entry !== '/' + mod.name + '/') warn('Hub.entry（' + entry + '）与目录名不一致，主页链接可能指向不存在的前缀');
+  if (!card) warn('没有声明 Hub.card，主页上这张卡片会缺简介与标签');
 
   const map = mod.Hub.routes || {};
+  let wired = 0;
   for (const type of Object.keys(map)) {
     const method = map[type];
     if (typeof hub[method] !== 'function') {
       console.error('[route skip]', type, '→', method, '不存在');
       continue;
     }
+    /*
+     * 一个消息类型只能有一个主人。这里以前是无声覆盖：后装配的游戏会把先装配的挤掉，
+     * 启动日志看不出任何异常 —— 多人协作时两个人各写一个游戏、恰好用了同一个前缀，
+     * 就会变成"我的游戏突然收不到消息了"。现在显式报告，并保留先注册的那个。
+     */
+    const owner = routeOwner.get(type);
+    if (owner) {
+      routeConflicts.push({ type: type, kept: owner, skipped: mod.name });
+      console.error('[route conflict] ' + type + ' 已被「' + owner + '」注册，'
+        + '已跳过「' + mod.name + '」的同名路由（两个游戏请各用自己的名字做前缀）');
+      continue;
+    }
+    routeOwner.set(type, mod.name);
     routes.set(type, (client, msg) => hub[method](client, msg));
+    wired++;
   }
-  console.log('[game] 已装配 ' + title + '  (' + Object.keys(map).length + ' 条消息路由)');
+  console.log('[game] 已装配 ' + title + '  (' + wired + ' 条消息路由)');
+}
+
+/* 消息前缀也不该两个游戏共用：类型虽不撞，语义已经混在一起，早晚出事 */
+const prefixOwner = new Map();          // 消息前缀 → 游戏目录名
+for (const [type, owner] of routeOwner) {
+  const prefix = String(type).split('.')[0];
+  const prev = prefixOwner.get(prefix);
+  if (!prev) { prefixOwner.set(prefix, owner); continue; }
+  if (prev === owner) continue;
+  if (gameWarnings.some(w => w.game === owner && w.msg.indexOf('消息前缀') === 0)) continue;
+  gameWarnings.push({ game: owner, msg: '消息前缀 "' + prefix + '.*" 已被「' + prev + '」使用' });
+  console.warn('[game warn] ' + owner + '：消息前缀 "' + prefix + '.*" 已被「' + prev + '」使用，两个游戏共用前缀迟早会撞');
+}
+
+/* 主页卡片顺序由游戏自己声明（Hub.order），平台不写死任何游戏名 */
+games.sort((a, b) => (a.order - b.order) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+/** 卡片插画：以 / 开头当绝对路径，否则相对自己的 entry */
+function cardArtUrl(g) {
+  const art = g.card && g.card.art;
+  if (!art) return '';
+  return art.charAt(0) === '/' ? art : (g.entry + art);
 }
 
 // 游戏都发现了，据此生成静态挂载点（每个游戏的 client/ 与 shared/）
 MOUNTS = buildMounts();
+
+/*
+ * 装配完就把问题摆到台面上。这些都不致命（服务照样起得来），
+ * 但正是多人协作时最费时间的那类问题：一个人改了、另一个人莫名其妙地坏了。
+ */
+if (routeConflicts.length) {
+  console.error('');
+  console.error('[!] 有 ' + routeConflicts.length + ' 条消息被两个游戏重复注册（先注册的生效）：');
+  routeConflicts.forEach(c => console.error('      ' + c.type + '  →  ' + c.kept + ' 生效，' + c.skipped + ' 未生效'));
+  console.error('    改法：每个游戏只用自己的名字做消息前缀，例如 ' + routeConflicts[0].skipped + '.xxx');
+  console.error('');
+}
 
 /* ---------------- 消息处理（通用部分 + 各游戏路由） ---------------- */
 function eachHub(fn) {
@@ -272,7 +339,20 @@ const server = http.createServer((req, res) => {
       port: PORT,
       urls: LAN_URLS,
       addresses: LAN,
-      games: games.map(g => ({ name: g.name, title: g.title, entry: g.entry }))
+      /*
+       * 主页就拿这个列表渲染卡片 —— 所以「新增游戏 = 新建一个文件夹」是真的，
+       * 不需要谁回来手改 platform/web/index.html。
+       */
+      games: games.map(g => ({
+        name: g.name,
+        title: g.title,
+        entry: g.entry,
+        desc: (g.card && g.card.desc) || '',
+        tags: (g.card && Array.isArray(g.card.tags)) ? g.card.tags : [],
+        art: cardArtUrl(g)
+      })),
+      routeConflicts: routeConflicts,     // 非空说明有游戏消息撞车了，测试脚本会断言它为空
+      gameWarnings: gameWarnings
     }, stats)));
     return;
   }

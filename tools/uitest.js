@@ -152,8 +152,28 @@ async function getTarget(port, retry) {
     console.log('\n== 1. 主页 ==');
     await goto(BASE + '/');
     ok('主页加载无报错', errors.length === 0, errors.join(' | '));
-    const cards = await evalJs("document.querySelectorAll('.game-card').length");
-    ok('主页有两个游戏入口', cards === 2, '卡片数 ' + cards);
+    /* 卡片是脚本读 /api/status 渲染出来的 —— 直接和接口对账，
+       以后往 games/ 里加多少游戏，这条断言都不用回来改 */
+    const homeCards = JSON.parse(await evalAsync(
+      "(async () => {" +
+      "  for (let i = 0; i < 40; i++) { if (document.querySelectorAll('.game-card').length) break; await new Promise(r => setTimeout(r, 100)); }" +
+      "  const s = await (await fetch('/api/status')).json();" +
+      "  const as = Array.from(document.querySelectorAll('.game-card'));" +
+      "  return JSON.stringify({" +
+      "    n: as.length," +
+      "    want: s.games.map(g => g.entry)," +
+      "    hrefs: as.map(a => a.getAttribute('href'))," +
+      "    titles: as.map(a => (a.querySelector('h2') || {}).textContent || '')," +
+      "    tags: as.map(a => a.querySelectorAll('.tags li').length)," +
+      "    artOk: as.every(a => { const i = a.querySelector('.art img'); return !!i && i.naturalWidth > 0; })" +
+      "  });" +
+      "})()"
+    ));
+    ok('主页卡片数 = 接口报出的游戏数', homeCards.n === homeCards.want.length, homeCards.n + ' / ' + homeCards.want.length);
+    ok('卡片顺序与入口跟接口一致', homeCards.hrefs.join(',') === homeCards.want.join(','), homeCards.hrefs.join(','));
+    ok('每张卡片都渲染出标题与标签', homeCards.titles.every(Boolean) && homeCards.tags.every(n => n > 0),
+      homeCards.titles.join(' / ') + '  标签数 ' + homeCards.tags.join(','));
+    ok('卡片插画（svg）真的加载出来了', homeCards.artOk === true);
     const badge = await evalJs("document.getElementById('netBadge').textContent");
     ok('WebSocket 已连接', /已连接/.test(badge), '状态：' + badge);
     const L = JSON.parse(await evalJs("JSON.stringify({shown:!document.getElementById('lanBanner').classList.contains('hidden'),url:document.getElementById('lanUrl').textContent})"));

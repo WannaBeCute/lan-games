@@ -31,7 +31,8 @@ games/<名字>/
 | `new Hub(ctx)` | ✅ | `ctx` 提供：`ctx.send(client, obj)`、`ctx.clients`(Map)、`ctx.findByInviteCode(code)`、`ctx.listOnline()` |
 | `Hub.routes = { '前缀.动作': '方法名' }` | ✅ | 平台据此把你的消息路由进来；`t` 不在表里的消息不会被处理 |
 | 实例方法 `方法名(client, msg)` | ✅ | `client` = `{ id, name, ip, inviteCode, ... }`，`msg` = 收到的 JSON 对象 |
-| `Hub.title` / `Hub.entry` | 建议 | 显示名（主页/日志用）与访问入口，如 `'贪吃蛇'` / `'/snake/'` |
+| `Hub.title` / `Hub.entry` | ✅ | 显示名（主页/日志用）与访问入口，如 `'贪吃蛇'` / `'/snake/'`。`entry` 必须等于 `'/' + 目录名 + '/'`，否则主页链接会指向不存在的前缀 |
+| `Hub.card` / `Hub.order` | 建议 | 主页卡片上显示什么：`{ desc, tags: [...], art: 'card.svg' }`，以及卡片排序（数字小的排前面，默认 100）。不声明也能跑，只是卡片会用标题首字当占位图、排在最后 |
 | `stats()` | 可选 | 返回对象会并进 `/api/status` |
 | `onClose(client)` / `onRename(client)` | 可选 | 玩家断线 / 改昵称时被调用 |
 | `step(dt)` / `broadcast(dt)` | 可选 | **只有需要每帧推进的游戏才实现**（如坦克）；回合制游戏不要写 |
@@ -63,6 +64,12 @@ class GuessHub {
 
 GuessHub.title = '猜数字';
 GuessHub.entry = '/guess/';
+GuessHub.order = 30;              // 主页卡片顺序（数字小的排前面），默认 100
+GuessHub.card = {                 // 主页卡片上的内容与插画，平台只负责渲染
+  desc: '1~100 猜一个数，次数越少越厉害。',
+  tags: ['单人', '无需联网'],
+  art: 'card.svg'                 // 相对自己的入口 = /guess/card.svg；不声明就用标题首字当占位图
+};
 GuessHub.routes = { 'guess.start': 'start', 'guess.guess': 'guess' };
 
 module.exports = GuessHub;
@@ -125,7 +132,11 @@ module.exports = GuessHub;
 - **零 npm 依赖**：服务端只用 Node 内置模块；前端不用打包器、不引入 npm 前端依赖。
 - **不许串门**：只引用自己 `/<名字>/` 下的资源；跨游戏通用代码一律走 `/shared/*`。
 - **新增游戏后**：重启服务端，启动日志应出现 `[game] 已装配 <显示名> (N 条消息路由)`；
-  然后跑一遍现有自检（`node tools/selftest.js` 等）确认没把平台改坏。
+  主页会**自动多出一张卡片**（内容来自 `Hub.card`，插画来自 `Hub.card.art`）——
+  不需要改 `platform/web/index.html`，那里只有一个空容器 `#hubGrid`，卡片全是脚本按 `/api/status` 渲染的。
+- **然后跑平台自检**：`node tools/platformtest.js`。它一次查清这几件事：契约有没有漏、
+  消息类型和前缀有没有和别的游戏撞、目录名有没有撞平台保留路径、卡片插画在不在、
+  主页是不是真的把卡片渲染出来了。新游戏加进来先跑它，再跑 `tools/selftest.js` 等既有自检确认没把平台改坏。
 - `.bat` 必须是 CRLF（仓库已用 `.gitattributes` 兜底）；测试脚本放 `tools/`。
 
 ---
@@ -152,12 +163,16 @@ module.exports = GuessHub;
 【要产出的文件（严格按此结构）】
 1) games/{{name}}/server/room.js —— 服务端逻辑，导出一个类 Hub：
    - 构造函数接收 ctx（含 ctx.send(client, obj) / ctx.clients / ctx.findByInviteCode(code)）
-   - 静态 Hub.title = '{{中文名}}'、Hub.entry = '/{{name}}/'
-   - 静态 Hub.routes = { '{{name}}.动作': '实例方法名' }（消息类型统一用 {{name}}.* 前缀）
+   - 静态 Hub.title = '{{中文名}}'、Hub.entry = '/{{name}}/'（entry 必须与目录名一致）
+   - 静态 Hub.routes = { '{{name}}.动作': '实例方法名' }（消息类型统一用 {{name}}.* 前缀，
+     不要用别的游戏已经用过的前缀，否则两个游戏的消息会互相顶掉）
+   - 静态 Hub.order = 30、Hub.card = { desc: '一句话简介', tags: ['标签1','标签2'], art: 'card.svg' }
+     （这两项决定主页上那张卡片；不写也能跑，但卡片会缺简介和插画，平台自检也会报出来）
    - 实例方法签名是 (client, msg)；需要就加 stats() / onClose(client) / onRename(client)
    - 只有需要每帧推进的游戏才实现 step(dt) / broadcast(dt)，回合制游戏不要写
 2) games/{{name}}/client/index.html —— 页面（可用内联或同目录的 CSS/JS）
-3) games/{{name}}/client/ 下的其他资源（可选）；需要前后端共用内核时才建 games/{{name}}/shared/
+3) games/{{name}}/client/card.svg —— 主页卡片插画，600×148 的纯 SVG（不要引外部图片、不要脚本）
+4) games/{{name}}/client/ 下的其他资源（可选）；需要前后端共用内核时才建 games/{{name}}/shared/
 
 【硬约束】
 - 服务端零 npm 依赖，只用 Node 内置模块；前端不用打包器，用传统 <script> + 全局命名空间。
@@ -167,8 +182,11 @@ module.exports = GuessHub;
 - 不要修改 platform/ 下任何文件，也不要碰 games/ 下已存在的其他游戏。
 
 【完成标准】
-- 重启服务端（node platform/server/server.cjs）后，启动日志出现 `[game] 已装配 {{中文名}} (N 条消息路由)`；
-- 浏览器打开 /{{name}}/ 能玩，核心玩法跑通，控制台无报错。
+- 重启服务端（node platform/server/server.cjs）后，启动日志出现 `[game] 已装配 {{中文名}} (N 条消息路由)`，
+  并且**没有任何 `[route conflict]` / `[game warn]` 输出**；
+- `node tools/platformtest.js` 全部通过（它会检查契约、消息前缀有没有撞车、卡片插画在不在、主页有没有渲染出卡片）；
+- 浏览器打开 /{{name}}/ 能玩，核心玩法跑通，控制台无报错；
+- 打开主页 / 能看到自己这张卡片（标题、简介、标签、插画都在）。
 ```
 
 > 小技巧：把「游戏设定」换成更有画面感的描述（比如"双人对战的井字棋，轮到谁就高亮谁，

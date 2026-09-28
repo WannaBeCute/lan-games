@@ -6,7 +6,8 @@
   "main": "platform/server/server.cjs",
   "scripts": {
     "start": "node platform/server/server.cjs",
-    "test": "node tools/selftest.js && node tools/nettest.js",
+    "test": "node tools/platformtest.js && node tools/selftest.js && node tools/nettest.js",
+    "test:platform": "node tools/platformtest.js",
     "test:core": "node tools/selftest.js",
     "test:net": "node tools/nettest.js",
     "test:room": "node tools/roomtest.js",
