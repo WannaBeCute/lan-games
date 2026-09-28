@@ -36,20 +36,30 @@ const PORT = readPort();
 
 /* ============================================================
  *  静态资源：多个根，按 URL 前缀挂载（前缀长的优先）
- *    /shared/*        平台通用库与样式（platform/web/shared）
- *    /                平台主页（platform/web）
- *    /tank/shared/*   坦克内核（games/tank/shared）
- *    /tank/*          坦克客户端（games/tank/client）
- *    /gomoku/*        五子棋客户端（games/gomoku/client）
- *  每个游戏把自己的 client/ 挂到 /<名字>/ 下，互不干扰。
+ *    /shared/*           平台通用库与样式（platform/web/shared）
+ *    /                   平台主页（platform/web）
+ *    /<游戏名>/*         该游戏客户端（games/<名>/client）
+ *    /<游戏名>/shared/*  该游戏内核（games/<名>/shared，存在才挂）
+ *  游戏挂载点由 buildMounts() 在发现游戏后自动补上 —— 所以"加一个游戏"
+ *  只需要在 games/ 下新建文件夹，这里不用改。
  * ============================================================ */
-const MOUNTS = [
+const PLATFORM_MOUNTS = [
   { prefix: '/shared/', dir: path.join(WEB_DIR, 'shared') },
-  { prefix: '/', dir: WEB_DIR },
-  { prefix: '/tank/shared/', dir: path.join(GAMES_DIR, 'tank', 'shared') },
-  { prefix: '/tank/', dir: path.join(GAMES_DIR, 'tank', 'client') },
-  { prefix: '/gomoku/', dir: path.join(GAMES_DIR, 'gomoku', 'client') }
-].sort((a, b) => b.prefix.length - a.prefix.length);   // 长前缀优先匹配
+  { prefix: '/', dir: WEB_DIR }
+];
+
+let MOUNTS = [];                  // 由 buildMounts() 在发现游戏后填充
+
+/** 平台挂载点 + 每个游戏各自的挂载点（长前缀优先匹配） */
+function buildMounts() {
+  const list = PLATFORM_MOUNTS.slice();
+  for (const g of games) {
+    const sharedDir = path.join(GAMES_DIR, g.name, 'shared');
+    if (fs.existsSync(sharedDir)) list.push({ prefix: '/' + g.name + '/shared/', dir: sharedDir });
+    list.push({ prefix: '/' + g.name + '/', dir: path.join(GAMES_DIR, g.name, 'client') });
+  }
+  return list.sort((a, b) => b.prefix.length - a.prefix.length);
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -214,6 +224,9 @@ for (const mod of loadGameModules()) {
   }
   console.log('[game] 已装配 ' + title + '  (' + Object.keys(map).length + ' 条消息路由)');
 }
+
+// 游戏都发现了，据此生成静态挂载点（每个游戏的 client/ 与 shared/）
+MOUNTS = buildMounts();
 
 /* ---------------- 消息处理（通用部分 + 各游戏路由） ---------------- */
 function eachHub(fn) {
