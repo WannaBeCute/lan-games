@@ -16,7 +16,7 @@
  *   C→S  friends.remove     { ip }                  删除好友
  *   C→S  friends.chat       { ip, text, mid }       发消息（mid 由客户端生成，用于回显去重）
  *   C→S  friends.history    { ip }                  拉取与某好友的聊天记录
- *   C→S  friends.team       { ip, game, data, text } 发起组队邀请（免邀请码直达）
+ *   C→S  friends.team       { ip, game, entry, param, data, text } 发起组队邀请（免邀请码直达）
  *   C→S  friends.teamReply  { ip, accept }          应答组队邀请
  *   S→C  friends.state      { me, online, friends, requests }   全量状态（首次 hello 后下发）
  *   S→C  friends.invited    { from, name, ip }      收到好友邀请（左下角弹窗）
@@ -37,6 +37,37 @@ const CHAT_MAX_LEN = 500;             // 单条消息长度上限
 const DATA_FILE = process.env.WB_FRIENDS_FILE || path.join(__dirname, 'friends-data.json');
 
 function pairKey(a, b) { return a < b ? (a + '|' + b) : (b + '|' + a); }
+
+const TEAM_DATA_MAX = 1024;           // 组队邀请附带的 data 序列化后的长度上限
+const PARAM_NAME = /^[A-Za-z][A-Za-z0-9_]{0,15}$/;
+
+/**
+ * 受邀方可能正停在别的页面（最常见的就是平台主页），那个页面根本不认识这个游戏，
+ * 所以邀请里必须带一句「怎么跳过去」：站内入口路径 + 参数名。
+ *
+ * 入口路径只放行站内相对路径 —— 挡掉 http://、//host 这种协议相对写法，
+ * 也挡掉带 ? # \ 的花样（否则就成了把一个外来 URL 塞给别人的浏览器去跳）。
+ */
+function safeEntryPath(v) {
+  const s = typeof v === 'string' ? v.trim().slice(0, 120) : '';
+  if (!s || s.charAt(0) !== '/' || s.charAt(1) === '/') return '';
+  if (/[\\?#]/.test(s) || !/^\/[A-Za-z0-9._/-]+$/.test(s)) return '';
+  return s;
+}
+
+/** 参数名：老老实实一个标识符，别混进 & 之类的分隔符 */
+function safeParamName(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return PARAM_NAME.test(s) ? s : '';
+}
+
+/** 组队邀请的 data 只用来带"房间号 / 邀请码"这种小东西，过大的直接丢弃 */
+function safeTeamData(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  try {
+    return JSON.stringify(v).length <= TEAM_DATA_MAX ? v : {};
+  } catch (e) { return {}; }
+}
 
 class Friends {
   constructor(ctx) {
@@ -337,12 +368,16 @@ class Friends {
     if (!target) { this._send(client, { t: 'friends.result', ok: false, msg: '对方不在线' }); return; }
     const game = String((msg && msg.game) || '').slice(0, 24);
     if (!game) { this._send(client, { t: 'friends.result', ok: false, msg: '缺少游戏标识' }); return; }
-    const data = (msg && msg.data && typeof msg.data === 'object') ? msg.data : {};
+    const data = safeTeamData(msg && msg.data);
     const text = String((msg && msg.text) || '').slice(0, 80);
+    // 受邀方不一定待在同一个游戏页面，带上显示名 / 入口 / 参数名，让它自己跳过去
+    const label = String((msg && msg.label) || '').slice(0, 24);
+    const entry = safeEntryPath(msg && msg.entry);
+    const param = safeParamName(msg && msg.param);
 
     if (!this.teamInvites.has(ip)) this.teamInvites.set(ip, []);
-    this.teamInvites.get(ip).push({ from: client.ip, name: client.name, game, data, text, ts: Date.now() });
-    this._send(target, { t: 'friends.teamInvited', from: client.ip, name: client.name, game, data, text });
+    this.teamInvites.get(ip).push({ from: client.ip, name: client.name, game, label, entry, param, data, text, ts: Date.now() });
+    this._send(target, { t: 'friends.teamInvited', from: client.ip, name: client.name, game, label, entry, param, data, text });
     this._send(client, { t: 'friends.result', ok: true, msg: '组队邀请已发送给 ' + target.name });
 
     this._later(TEAM_TTL, () => { this._takeTeamInvite(ip, client.ip); });

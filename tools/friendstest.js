@@ -170,6 +170,37 @@ function client(tag, fip, port) {
   const resTeamB = await b.wait('friends.result');
   ok('B 收到自己的应答回执', resTeamB.ok === true && /接受/.test(resTeamB.msg || ''), resTeamB.msg);
 
+  /* 回归：受邀方可能正停在平台主页（那个页面不认识任何游戏），
+   * 所以邀请里必须带「显示名 + 站内入口 + 参数名」，它才能自己跳过去。
+   * 以前只发 game，对方在主页点接受就弹「无法识别的游戏：tank」。 */
+  console.log('\n== E2. 组队邀请自带「怎么跳过去」 ==');
+  a.send({
+    t: 'friends.team', ip: IP_B, game: 'tank', label: '坦克大战',
+    entry: '/tank/', param: 'join', data: { room: '4321' }, text: '房间 4321'
+  });
+  const teamB2 = await b.wait('friends.teamInvited');
+  ok('邀请里带上了显示名 / 入口 / 参数名',
+    teamB2.entry === '/tank/' && teamB2.param === 'join' && teamB2.label === '坦克大战',
+    JSON.stringify({ label: teamB2.label, entry: teamB2.entry, param: teamB2.param }));
+  await a.wait('friends.result');
+
+  a.send({ t: 'friends.team', ip: IP_B, game: 'tank', entry: 'https://evil.example/x', param: 'join&x=1', data: { room: '1' }, text: 'x' });
+  const teamB3 = await b.wait('friends.teamInvited');
+  ok('外来 URL 与花样参数名被丢掉（只放行站内相对路径）',
+    teamB3.entry === '' && teamB3.param === '', JSON.stringify({ entry: teamB3.entry, param: teamB3.param }));
+  await a.wait('friends.result');
+
+  a.send({ t: 'friends.team', ip: IP_B, game: 'tank', entry: '//evil.example/x', param: 'join', data: { room: '1' }, text: 'x' });
+  const teamB4 = await b.wait('friends.teamInvited');
+  ok('协议相对写法（//host）也被挡住', teamB4.entry === '', String(teamB4.entry));
+  await a.wait('friends.result');
+
+  a.send({ t: 'friends.team', ip: IP_B, game: 'tank', entry: '/tank/', param: 'join', data: { big: 'x'.repeat(4000) }, text: 'x' });
+  const teamB5 = await b.wait('friends.teamInvited');
+  ok('过大的 data 被丢弃（它只用来带房间号这种小东西）',
+    !teamB5.data || !teamB5.data.big, JSON.stringify(teamB5.data).slice(0, 60));
+  await a.wait('friends.result');
+
   console.log('\n== F. 拒绝好友邀请 ==');
   c.send({ t: 'friends.add', ip: IP_A });
   const resCAdd = await c.wait('friends.result');

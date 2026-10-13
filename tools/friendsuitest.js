@@ -275,6 +275,43 @@ function peer(port) {
     ok('对局正式开始（黑白已分配）', /"mode":"online"/.test(boardInfo), boardInfo);
     await shot('friends-gomoku');
 
+    /* ============ 7. 受邀方停在主页也能加入（回归） ============ */
+    /* 以前受邀方只要不在那个游戏页面（最常见的是停在平台主页），点接受就弹
+     * 「无法识别的游戏：tank」——因为主页根本不认识任何游戏。
+     * 现在邀请自带显示名 + 站内入口 + 参数名，任何页面都能把人送过去。 */
+    console.log('\n== 7. 受邀方停在主页也能加入（回归「无法识别的游戏」） ==');
+    await cdp.send('Page.navigate', { url: BASE + '/' });
+    ok('回到平台主页', await waitUntil("!!document.getElementById('btnFriends')"));
+    peerClient.send({ t: 'tank.create' });
+    const created2 = await peerClient.wait('tank.created');
+    ok('对方又建了一个坦克房间', /^\d{4}$/.test(created2.code), created2.code);
+    peerClient.send({
+      t: 'friends.team', ip: '127.0.0.1', game: 'tank', label: '坦克大战',
+      entry: '/tank/', param: 'join', data: { room: created2.code }, text: '房间 ' + created2.code
+    });
+    ok('主页也收到组队邀请弹窗，并显示游戏名（不是 "tank"）', await waitUntil(
+      "(function(){var p=document.querySelector('.fb-pop.team');" +
+      "return !!p && /坦克大战/.test(p.textContent) && /小明/.test(p.textContent);})()"));
+
+    await evalJs("Array.from(document.querySelectorAll('.fb-pop.team .btn')).find(b=>b.textContent==='接受').click()");
+    // 边等跳转边盯一眼有没有「无法识别」的提示冒出来
+    let sawUnknown = false;
+    for (let i = 0; i < 14; i++) {
+      const bad = await evalJs("Array.from(document.querySelectorAll('.wb-toast')).some(function(t){return /无法识别/.test(t.textContent);})").catch(() => false);
+      if (bad) { sawUnknown = true; break; }
+      if (await evalJs("location.pathname === '/tank/'").catch(() => false)) break;
+      await sleep(120);
+    }
+    ok('没有出现「无法识别的游戏」提示', sawUnknown === false);
+    ok('接受后跳到坦克页并自动加入房间', await waitUntil(
+      "(function(){return location.pathname === '/tank/'" +
+      " && !document.getElementById('scr-lobby').classList.contains('hidden')" +
+      " && document.getElementById('roomCode').textContent === '" + created2.code + "';})()", 12000),
+      await evalJs("location.pathname + ' room=' + ((document.getElementById('roomCode')||{}).textContent)"));
+    const teamRes2 = await peerClient.wait('friends.teamResult');
+    ok('对方仍能收到接受组队的回执（跳转没把回执吞掉）', teamRes2.accept === true, JSON.stringify(teamRes2));
+    await shot('friends-team-from-home');
+
     /* ============ 汇总 ============ */
     ok('全流程无 JS 报错', errors.length === 0, errors.join(' | '));
   } catch (e) {

@@ -45,6 +45,12 @@ window.WB = window.WB || {};
     try { sessionStorage.setItem(SS_OPEN, JSON.stringify(list)); } catch (e) { /* noop */ }
   }
 
+  /** 接受组队邀请后要跳到别的页面：先给个明确反馈（否则页面突然一跳人会懵） */
+  function toastRedirect(label) {
+    try { WB.ui.toast('已接受邀请，正在进入「' + (label || '对局') + '」…', 'ok'); } catch (e) { /* noop */ }
+    try { WB.audio.play('go'); } catch (e) { /* noop */ }
+  }
+
   /* ================= 游戏注册表 =================
    * 每个游戏页面启动时登记自己，好友系统因此保持「不认识任何游戏」：
    *   WB.Friends.registerGame({
@@ -258,8 +264,9 @@ window.WB = window.WB || {};
   FriendApp.prototype._onTeamInvited = function (m) {
     var self = this;
     WB.audio.play('invite');
+    // 本页认识这个游戏就用它的显示名；不认识（比如现在停在主页）就用邀请里带过来的
     var g = gameRegistry[m.game];
-    var label = g ? g.label : m.game;
+    var label = (g && g.label) || m.label || m.game;
     var rec = this._popup('team');
     var t = el('div', 't');
     var b = el('b');
@@ -280,11 +287,16 @@ window.WB = window.WB || {};
       if (g && typeof g.accept === 'function') {
         try { g.accept(m.data || {}); return; } catch (e) { /* 落到跳转 */ }
       }
-      if (g) {
-        location.href = g.entry + '?' + g.param + '=' + encodeURIComponent(JSON.stringify(m.data || {}));
-      } else {
-        WB.ui.toast('无法识别的游戏：' + m.game, 'err');
+      var entry = (g && g.entry) || m.entry;                  // 本页登记的优先，其次是邀请里带的
+      var param = (g && g.param) || m.param || 'join';
+      if (entry) {
+        var url = entry + '?' + param + '=' + encodeURIComponent(JSON.stringify(m.data || {}));
+        toastRedirect(label);
+        // 等一下再跳：先把「已接受」这条回执发出去，免得跳转把 socket 关了对方收不到
+        setTimeout(function () { location.href = url; }, 120);
+        return;
       }
+      WB.ui.toast('收到「' + label + '」的组队邀请，但当前页面打不开它，请先进游戏再加入', 'err');
     });
     no.addEventListener('click', function () {
       rec.close();
@@ -540,7 +552,13 @@ window.WB = window.WB || {};
       return;
     }
     function send(g, info) {
-      self.net.send({ t: 'friends.team', ip: ip, game: g.name, data: info.data, text: info.text });
+      // 带上 entry / param：对方可能正停在主页等"不认识这个游戏"的页面，
+      // 有了这两样他自己就能跳过来（见 _onTeamInvited）
+      self.net.send({
+        t: 'friends.team', ip: ip, game: g.name,
+        entry: g.entry, param: g.param,
+        data: info.data, text: info.text
+      });
     }
     if (opts.length === 1) { send(opts[0].g, opts[0].info); return; }
 
