@@ -10,6 +10,8 @@
  *   4) 聊天小窗：收消息 / 发消息 / 回车发送
  *   5) 组队邀请免邀请码：对方在坦克房间里发邀请 → 点接受 → 自动跳转并加入房间
  *   6) 五子棋：带 ?invite= 打开 → 自动向好友发起对局 → 双方进入棋盘
+ *   7) 受邀方停在平台主页（不认识任何游戏的页面）也一样能加入
+ *   8) 「邀请组队」按钮的显示条件：对方在线 + 本页确实有局可邀，才出现
  */
 const fs = require('fs');
 const os = require('os');
@@ -177,6 +179,17 @@ function peer(port) {
     const r = await cdp.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(SHOTS, name + '.png'), Buffer.from(r.data, 'base64'));
   };
+  /** 好友面板里「小明」那一行现在带不带「邀请组队」按钮 */
+  const hasTeamBtn = async () => evalJs(
+    "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
+    "return rows.some(function(r){return /小明/.test(r.textContent) && /邀请组队/.test(r.textContent);});})()");
+  /** 打开好友面板并切到「我的好友」 */
+  const openFriendsTab = async () => {
+    await evalJs("document.getElementById('btnFriends').click()");
+    await waitUntil("!!document.getElementById('wb-friends-mask')");
+    await evalJs("document.querySelector('.fb-tab[data-tab=\"friends\"]').click()");
+    await sleep(250);
+  };
 
   try {
     /* ============ 1. 打开坦克页，好友按钮就位 ============ */
@@ -221,6 +234,8 @@ function peer(port) {
       "return r?{name:/小明/.test(r.textContent),ip:/10\\.1\\.1\\.9/.test(r.textContent),online:/离线/.test(r.textContent)?false:true}:null;})()");
     ok('好友列表显示昵称 + 完整 IP + 在线状态', !!friendRow && friendRow.name && friendRow.ip && friendRow.online,
       JSON.stringify(friendRow));
+    // 此刻浏览器停在坦克「单机菜单」，还没建房间 —— 没有局可邀，就不该摆这个按钮
+    ok('对方在线但当前没有可邀请的房间 → 不显示「邀请组队」', !(await hasTeamBtn()));
     await shot('friends-panel');
 
     /* ============ 4. 聊天 ============ */
@@ -311,6 +326,33 @@ function peer(port) {
     const teamRes2 = await peerClient.wait('friends.teamResult');
     ok('对方仍能收到接受组队的回执（跳转没把回执吞掉）', teamRes2.accept === true, JSON.stringify(teamRes2));
     await shot('friends-team-from-home');
+
+    /* ============ 8. 「邀请组队」按钮的显示条件 ============ */
+    /* 规则：对方在线 **且** 本页确实有局可邀（比如正待在房间大厅里）才出现。
+     * 离线的人点了送不到；单机菜单/主页/对局中根本不知道该邀什么。 */
+    console.log('\n== 8. 「邀请组队」按钮的显示条件 ==');
+    // (a) 正例：此刻正待在坦克房间大厅（第 7 步刚加入的），对方也在线 → 应该有按钮
+    await openFriendsTab();
+    ok('在房间大厅 + 对方在线 → 显示「邀请组队」', await hasTeamBtn());
+
+    // (b) 离开房间（回到单机菜单，没有局可邀）→ 按钮收起来
+    await evalJs("document.querySelector('#wb-friends-mask .wb-x').click()");
+    await sleep(150);
+    await evalJs("document.getElementById('btnLeaveRoom').click()");
+    await sleep(400);
+    await openFriendsTab();
+    ok('离开房间后（不在联机状态）→ 不再显示「邀请组队」', !(await hasTeamBtn()));
+    await shot('friends-team-button-rules');
+
+    // (c) 对方掉线（面板就开着，靠在线状态推送自动刷新）→ 同样不显示
+    peerClient.close();
+    const offlineOk = await waitUntil(
+      "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
+      "var r=rows.filter(function(x){return /小明/.test(x.textContent);})[0];" +
+      "return !!r && /离线/.test(r.textContent) && !/邀请组队/.test(r.textContent);})()", 10000);
+    ok('对方掉线后面板里变「离线」，且不再显示「邀请组队」', offlineOk, await evalJs(
+      "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
+      "return rows.length ? rows.map(function(r){return r.textContent.replace(/\\s+/g,' ');}).join(' | ') : '<面板里没有好友行>';})()"));
 
     /* ============ 汇总 ============ */
     ok('全流程无 JS 报错', errors.length === 0, errors.join(' | '));

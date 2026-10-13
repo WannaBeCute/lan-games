@@ -253,6 +253,12 @@ function client(tag, fip, port) {
   b.close();
   const presOff = await a.wait('friends.presence');
   ok('B 掉线后 A 收到离线通知', presOff.ip === IP_B && presOff.online === false);
+  ok('离线通知里也带着昵称（界面才不会只剩一个 IP）', presOff.name === 'B', presOff.name);
+  a.drain('friends.state');
+  a.send({ t: 'friends.refresh' });
+  const saOff = await a.wait('friends.state');
+  const offFriend = saOff.friends.filter(f => f.ip === IP_B)[0] || {};
+  ok('刷全量时离线的好友仍保留昵称', offFriend.name === 'B' && offFriend.online === false, JSON.stringify(offFriend));
   const b2 = await client('B2', IP_B, port);
   await b2.wait('hello');
   const presOn = await a.wait('friends.presence');

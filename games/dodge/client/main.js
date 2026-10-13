@@ -528,6 +528,7 @@
       S.online.members = m.members;
       // 刷新页面后回到同一房间：把聊天频道也接回来（房间在，聊天区就在）
       if (m.code) WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
+      WB.Friends.refreshGame();   // 房间状态变了 → 好友面板里的「邀请组队」跟着出现/消失
       if (S.screen === 'scr-lobby' || m.state === 'lobby') renderLobby(m);
       else if (S.screen === 'scr-game') { /* 对局中收到大厅状态，忽略 */ }
       else renderLobby(m);
@@ -1000,6 +1001,7 @@
       WB.Chat.leaveRoom();          // 退出房间 → 关掉本局聊天频道
       S.world = null;
       S.online = null;
+      WB.Friends.refreshGame();     // 没有房间了 → 「邀请组队」收起来
       show('scr-menu');
     };
     $('btnReady').onclick = function () {

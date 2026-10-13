@@ -400,6 +400,7 @@
 
   function onCode(m) {
     G.myCode = m.code;
+    WB.Friends.refreshGame();   // 拿到邀请码了 → 好友面板里的「邀请组队」可以出现了
     $('myCode').textContent = m.code;
     $('myCode2').textContent = m.code;
     var ip = String(m.ip || '');

@@ -82,6 +82,12 @@ class Friends {
     this.teamInvites = new Map();
     /** ip -> { count, name, code, client }：当前在线的 IP（同一台电脑可能开多个页面） */
     this.online = new Map();
+    /**
+     * ip -> 最后一次用过的昵称。
+     * 只靠 online 里的名字的话，人一下线名字就没了，好友列表会退化成显示 IP；
+     * 昵称跟着"这台电脑"走，和好友关系一样是长期的，所以单独记一份。
+     */
+    this.names = new Map();
     this._timers = new Set();
     this._saveTimer = null;
     this._load();
@@ -105,6 +111,11 @@ class Friends {
             this.chats.set(k, list.filter(m => m && typeof m.text === 'string').slice(-CHAT_CAP));
           }
         }
+        if (raw.names && typeof raw.names === 'object') {
+          for (const ip of Object.keys(raw.names)) {
+            if (typeof raw.names[ip] === 'string') this.names.set(ip, raw.names[ip]);
+          }
+        }
       }
     } catch (e) { /* 数据损坏就当作没有存档，不影响开服 */ }
   }
@@ -119,8 +130,10 @@ class Friends {
         for (const [ip, set] of this.pairs) pairs[ip] = Array.from(set);
         const chats = {};
         for (const [k, list] of this.chats) chats[k] = list;
+        const names = {};
+        for (const [ip, n] of this.names) names[ip] = n;
         const tmp = DATA_FILE + '.tmp';
-        fs.writeFileSync(tmp, JSON.stringify({ v: 1, savedAt: Date.now(), pairs, chats }));
+        fs.writeFileSync(tmp, JSON.stringify({ v: 1, savedAt: Date.now(), pairs, chats, names }));
         fs.renameSync(tmp, DATA_FILE);
       } catch (e) { /* 磁盘出问题不影响内存里的好友关系 */ }
     }, 600);
@@ -135,6 +148,11 @@ class Friends {
    * 同一 IP 多个页面只算一个在线实体，count 用于引用计数。
    */
   onHello(client) {
+    // 记住这台电脑最后用过的昵称：掉线后好友列表还能显示名字，而不是一个光秃秃的 IP
+    if (client.name && this.names.get(client.ip) !== client.name) {
+      this.names.set(client.ip, client.name);
+      this._persist();
+    }
     if (client._friendsSeen) {
       // 改名：刷新在线记录并让好友看到新名字
       const rec = this.online.get(client.ip);
@@ -207,7 +225,7 @@ class Friends {
    */
   _notifyPresence(ip, online) {
     const rec = this.online.get(ip);
-    const name = rec ? rec.name : '';
+    const name = rec ? rec.name : (this.names.get(ip) || '');
     for (const [cip, crec] of this.online) {
       if (cip === ip) continue;
       const c = crec.client;
@@ -242,7 +260,11 @@ class Friends {
     const friends = [];
     for (const fip of this.friendsOf(me)) {
       const rec = this.online.get(fip);
-      friends.push({ ip: fip, name: rec ? rec.name : fip, online: !!rec, code: rec ? rec.code : '' });
+      // 离线的好友也保留昵称（记在 names 里），别退化成只显示 IP
+      friends.push({
+        ip: fip, name: rec ? rec.name : (this.names.get(fip) || fip),
+        online: !!rec, code: rec ? rec.code : ''
+      });
     }
     const requests = [];
     for (const r of (this.requests.get(me) || [])) {

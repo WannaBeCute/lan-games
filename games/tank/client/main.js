@@ -932,6 +932,7 @@
     S.local = null; S.single = null; S.fx = [];
     S.online = null;          // 下次进联机会重新建会话
     S.room = null;
+    WB.Friends.refreshGame();  // 离开房间了 → 好友面板里的「邀请组队」该收起来
     hideOverlay();
     show('scr-menu');
     refreshBest();
@@ -1019,6 +1020,7 @@
 
   function renderLobby(room) {
     S.room = room;
+    WB.Friends.refreshGame();  // 有房间了 → 好友面板里的「邀请组队」可以出现了
     $('roomCode').textContent = room.code;
     $('roomCount').textContent = room.members.length + '/' + (room.maxPlayers || 4);
     var isHost = room.hostId === S.net.id;
@@ -1162,7 +1164,7 @@
       // 刷新页面后回到同一房间：把聊天频道也接回来
       if (m.code) WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
       if (m.state === 'lobby' || m.state === 'over') renderLobby(m);
-      else S.room = m;
+      else { S.room = m; WB.Friends.refreshGame(); }   // 开局了 → 不能再邀人进这个房间
     });
     S.net.on('tank.error', function (m) { WB.ui.toast(m.msg || '操作失败', 'err'); WB.audio.play('error'); });
     S.net.on('tank.playerLeft', function (m) { WB.ui.toast((m.name || '玩家') + ' 离开了房间'); });
@@ -1291,6 +1293,7 @@
       S.room = null;
       S.online = null;
       WB.Chat.leaveRoom();          // 退出房间 → 关掉本局聊天频道
+      WB.Friends.refreshGame();     // 没有房间了 → 「邀请组队」收起来
       show('scr-menu');
     };
     $('btnCopyCode').onclick = function () {

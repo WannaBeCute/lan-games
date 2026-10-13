@@ -72,6 +72,13 @@ window.WB = window.WB || {};
     registerGame: function (g) {
       if (g && g.name) gameRegistry[g.name] = g;
     },
+    /**
+     * 游戏里房间/对局状态变了就喊一声（建房、入房、离开、开局结束），
+     * 面板开着时「邀请组队」按钮会跟着出现/消失。
+     */
+    refreshGame: function () {
+      if (WB.friends) WB.friends.refreshGame();
+    },
     boot: function (net) {
       var app = new FriendApp(net);
       app.mount();
@@ -402,7 +409,8 @@ window.WB = window.WB || {};
 
     var note = el('p', 'fb-note');
     note.textContent = '好友以「电脑（IP）」为单位：同一台电脑重开页面、换游戏，好友都不会丢；服务端重启后也还在。'
-      + '成为好友后即可直接组队、聊天，不用再报邀请码。';
+      + '成为好友后即可直接组队、聊天，不用再报邀请码。'
+      + '「邀请组队」只在对方在线、且你正待在能联机的页面（例如建好房间的大厅里）时才出现。';
     body.appendChild(note);
   };
 
@@ -495,6 +503,9 @@ window.WB = window.WB || {};
       return;
     }
 
+    // 本页有没有可邀请的对局（算了就复用，别每行都问一遍游戏）
+    var teamOpts = this._teamOptions();
+
     var list = el('div', 'fb-list');
     this.friends.forEach(function (f) {
       var row = el('div', 'fb-row');
@@ -515,12 +526,18 @@ window.WB = window.WB || {};
       });
       acts.appendChild(chat);
 
-      var team = el('button', 'btn tiny ok', '邀请组队');
-      team.addEventListener('click', function () {
-        WB.audio.play('click');
-        self._teamMenu(team, f.ip);
-      });
-      acts.appendChild(team);
+      /* 「邀请组队」只在两个条件都满足时出现：
+       *   ① 对方在线 —— 离线的人点了也送不到，白点一下
+       *   ② 本页确实有局可邀（canInvite 有东西）—— 比如正待在房间大厅里。
+       *      单机菜单、平台主页、对局中……这些页面根本不知道该邀什么，就不摆这个按钮了。 */
+      if (f.online && teamOpts.length) {
+        var team = el('button', 'btn tiny ok', '邀请组队');
+        team.addEventListener('click', function () {
+          WB.audio.play('click');
+          self._teamMenu(team, f.ip);
+        });
+        acts.appendChild(team);
+      }
 
       var del = el('button', 'btn tiny danger', '删除');
       del.title = '删除好友';
@@ -536,9 +553,11 @@ window.WB = window.WB || {};
     body.appendChild(list);
   };
 
-  /** 「邀请组队」：汇总当前页面注册过的游戏能提供的邀请，只有一个就直接发 */
-  FriendApp.prototype._teamMenu = function (anchor, ip) {
-    var self = this;
+  /**
+   * 当前页面注册过的游戏里，现在真的能发出邀请的那些。
+   * 空数组 = 这个页面没有可邀请的对局/房间（按钮就不该出现）。
+   */
+  FriendApp.prototype._teamOptions = function () {
     var opts = [];
     for (var name in gameRegistry) {
       var g = gameRegistry[name];
@@ -546,6 +565,18 @@ window.WB = window.WB || {};
       try { info = g.canInvite && g.canInvite(); } catch (e) { info = null; }
       if (info) opts.push({ g: g, info: info });
     }
+    return opts;
+  };
+
+  /** 游戏里的房间/对局状态变了（建房、入房、离开、开局）→ 让好友面板跟着刷新按钮 */
+  FriendApp.prototype.refreshGame = function () {
+    if (this.panelOpen) this.renderBody();
+  };
+
+  /** 「邀请组队」：汇总当前页面注册过的游戏能提供的邀请，只有一个就直接发 */
+  FriendApp.prototype._teamMenu = function (anchor, ip) {
+    var self = this;
+    var opts = this._teamOptions();
     if (!opts.length) {
       WB.ui.toast('当前页面没有可邀请的对局或房间', 'err');
       WB.audio.play('error');
