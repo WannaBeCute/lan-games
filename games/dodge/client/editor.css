@@ -1,0 +1,88 @@
+/* ===== 方块躲避 · 关卡编辑器样式 ===== */
+
+.ed-wrap { padding: 16px 18px 40px; max-width: 1600px; margin: 0 auto; }
+
+.ed-top {
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between;
+  padding: 14px 18px; margin-bottom: 16px;
+}
+.ed-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ed-group.right { gap: 8px; }
+.ed-lbl { font-size: 13px; color: var(--dim); }
+.field.tiny { width: 72px; padding: 7px 9px; font-size: 13px; }
+.field.name { width: 170px; padding: 7px 11px; font-size: 13px; }
+
+.ed-main { display: grid; grid-template-columns: 250px minmax(0, 1fr) 290px; gap: 16px; align-items: start; }
+@media (max-width: 1180px) { .ed-main { grid-template-columns: 220px minmax(0, 1fr); } .ed-props { grid-column: 1 / -1; } }
+
+.panel { padding: 16px; }
+.panel h3 { margin: 0 0 12px; font-size: 15px; }
+
+/* 工具 */
+.tool-list { display: flex; flex-direction: column; gap: 7px; }
+.tool {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; text-align: left;
+  border-radius: 11px; border: 1px solid var(--line); background: rgba(255, 255, 255, .035);
+  color: var(--text); font-size: 13.5px;
+}
+.tool i { font-style: normal; font-size: 15px; width: 18px; text-align: center; color: var(--dim); }
+.tool:hover { border-color: #46618f; }
+.tool.on { background: rgba(76, 141, 255, .2); border-color: var(--accent); font-weight: 700; }
+.tool.on i { color: #9dc0ff; }
+.tool-tip { margin-top: 14px; font-size: 12px; color: var(--dim2); line-height: 1.9; }
+.tool-tip b { color: var(--text); }
+.ed-sub { margin-top: 16px; }
+.ed-sub h4 { margin: 0 0 8px; font-size: 12.5px; color: #9dc0ff; }
+.ed-sub .btn { margin-bottom: 7px; }
+.stats { font-size: 12.5px; color: var(--dim); line-height: 1.9; }
+.stats b { color: var(--text); }
+
+/* 画布 */
+.ed-center { display: flex; flex-direction: column; gap: 10px; }
+.ed-canvas-wrap {
+  position: relative; display: flex; align-items: center; justify-content: center; min-height: 420px;
+  padding: 12px; border-radius: 16px; border: 1px solid var(--line); background: rgba(9, 12, 18, .7);
+}
+.ed-canvas-wrap canvas { display: block; border-radius: 8px; cursor: crosshair; touch-action: none; }
+.ed-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; color: var(--dim); font-size: 14px; text-align: center;
+}
+.ed-empty .small { font-size: 12px; color: var(--dim2); }
+.ed-pathbar {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: 999px;
+  background: rgba(76, 141, 255, .18); border: 1px solid var(--accent); font-size: 12.5px; color: #cfe0ff;
+}
+.ed-status { font-size: 12.5px; color: var(--dim2); min-height: 18px; }
+.ed-issues { font-size: 12.5px; line-height: 1.9; }
+.ed-issues .err { color: #ff9ba4; }
+.ed-issues .warn { color: #ffcf7a; }
+.ed-issues .ok { color: #8ff0cd; }
+
+/* 属性面板 */
+.prop-body { font-size: 13px; }
+.prop-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.prop-row label { flex: 0 0 62px; color: var(--dim); font-size: 12.5px; }
+.prop-row .val { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+.prop-row input[type=range] { flex: 1; }
+.prop-row select, .prop-row .field { flex: 1; padding: 7px 10px; font-size: 13px; }
+.path-list { margin: 10px 0 14px; padding-left: 18px; color: var(--dim); font-size: 12.5px; line-height: 1.8; }
+.prop-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 关卡库 */
+.lib-sec { margin-bottom: 20px; }
+.lib-sec h4 { margin: 0 0 8px; font-size: 13px; color: #9dc0ff; }
+.lib-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.lib-list button {
+  padding: 8px 11px; border-radius: 10px; cursor: pointer; font-size: 12.5px;
+  border: 1px solid var(--line2); background: rgba(255, 255, 255, .04); color: var(--text);
+}
+.lib-list button:hover { border-color: var(--accent); }
+.lib-list button.del { border-color: rgba(255, 93, 108, .5); color: #ffc2c8; }
+textarea.field { width: 100%; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
+.help-body { font-size: 13px; line-height: 1.95; color: var(--dim); }
+.help-body ol { padding-left: 20px; margin: 0; }
+.help-body li { margin-bottom: 10px; }
+.help-body b { color: var(--text); }
+.help-body code { background: rgba(76, 141, 255, .14); color: #9dc0ff; padding: 1px 6px; border-radius: 6px; font-size: 12px; }

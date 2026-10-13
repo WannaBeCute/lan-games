@@ -108,6 +108,8 @@ button { font-family: inherit; }
   transition: transform .18s ease, border-color .18s ease;
 }
 .game-card:hover { transform: translateY(-5px); border-color: #46618f; }
+/* 卡片主体是一个链接；附属入口（如关卡编辑器）得放在它外面 —— a 里不能套 a */
+.game-card .card-main { display: block; color: inherit; text-decoration: none; }
 .game-card .art { height: 148px; border-radius: 14px; margin-bottom: 20px; overflow: hidden; position: relative; border: 1px solid var(--line); }
 .game-card h2 { margin: 0 0 8px; font-size: 24px; letter-spacing: 1px; }
 .game-card p { margin: 0 0 16px; color: var(--dim); font-size: 14px; line-height: 1.7; }
@@ -116,6 +118,13 @@ button { font-family: inherit; }
 .game-card .go { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--accent); }
 .game-card .go::after { content: '→'; transition: transform .18s ease; }
 .game-card:hover .go::after { transform: translateX(5px); }
+.card-extra { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.card-extra a {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 13px;
+  border-radius: 999px; border: 1px solid var(--line); color: var(--dim);
+  text-decoration: none; transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+.card-extra a:hover { color: #cfe0ff; border-color: #46618f; background: rgba(76, 141, 255, .12); }
 
 /* ---------- 玻璃面板 ---------- */
 .panel {

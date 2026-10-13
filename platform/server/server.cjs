@@ -2,10 +2,11 @@
 /**
  * 机房小游戏 —— 平台主机（零 npm 依赖，只用 Node 内置模块）
  *
- * 主机只做三件事，**不含任何游戏规则**：
+ * 主机只做四件事，**不含任何游戏规则**：
  *   1) 提供静态资源（主页 + 各游戏的客户端）
  *   2) 装配 WebSocket，把消息按各游戏"自己声明"的路由分发过去
  *   3) 驱动各游戏模块的 tick（有 step/broadcast 的才跑）
+ *   4) 好友系统（friends.cjs）：好友关系 / 邀请 / 聊天 / 组队邀请，所有游戏通用
  *
  * 具体玩法都在 games/<名字>/ 里。新增一个游戏 = 新建一个文件夹，
  * 主机自动发现，不用回来改这个文件。
@@ -19,6 +20,7 @@ const os = require('os');
 const crypto = require('crypto');
 
 const ws = require('./ws');
+const Friends = require('./friends.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');            // 仓库根
 const WEB_DIR = path.join(ROOT, 'platform', 'web');          // 平台前端（主页 + 通用库）
@@ -211,6 +213,18 @@ const routeOwner = new Map();           // 消息类型 → 注册它的游戏�
 const routeConflicts = [];              // 同名消息被两个游戏抢（记录后保留先注册的）
 const gameWarnings = [];                // 契约上的问题：不致命，但会让"加游戏的人"踩坑
 
+/*
+ * 平台层自己的消息路由：好友系统（所有游戏通用，身份以 IP 为单位）。
+ * 先于游戏注册 —— 万一哪个游戏也用了 friends. 前缀，下面的冲突机制会当面指出。
+ */
+const friends = new Friends(ctx);
+for (const type of Object.keys(Friends.routes)) {
+  const method = Friends.routes[type];
+  routes.set(type, (client, msg) => friends[method](client, msg));
+  routeOwner.set(type, 'platform(好友系统)');
+}
+console.log('[platform] 已装配好友系统（' + Object.keys(Friends.routes).length + ' 条消息路由，好友数据所有游戏通用）');
+
 /** 目录名会直接变成 URL 前缀，撞上平台保留路径会让静态挂载互相遮蔽 */
 const RESERVED_NAMES = new Set(['shared', 'api', 'platform', 'games', 'tools']);
 
@@ -230,6 +244,9 @@ for (const mod of loadGameModules()) {
   if (!mod.Hub.title) warn('没有声明 Hub.title，主页与日志会显示英文目录名');
   if (entry !== '/' + mod.name + '/') warn('Hub.entry（' + entry + '）与目录名不一致，主页链接可能指向不存在的前缀');
   if (!card) warn('没有声明 Hub.card，主页上这张卡片会缺简介与标签');
+  if (card && Array.isArray(card.links) && cardLinks({ card: card }).length < card.links.length) {
+    warn('Hub.card.links 里有被丢掉的项：只允许站内相对路径（以 / 开头）且要有 label，最多 3 个');
+  }
 
   const map = mod.Hub.routes || {};
   let wired = 0;
@@ -280,6 +297,28 @@ function cardArtUrl(g) {
   return art.charAt(0) === '/' ? art : (g.entry + art);
 }
 
+/**
+ * 卡片上的「附属入口」：像方块躲避的关卡编辑器这种"游戏的第二个页面"，
+ * 由游戏自己声明（Hub.card.links），主页照着渲染，平台照旧不认识任何具体游戏名。
+ *
+ * 为什么要白名单校验：卡片是给全班同学点的，不能让某个游戏在主页上挂个站外链接把人带走。
+ * 所以只收站内相对路径（/ 开头、且不是 //host），标签当纯文本、限长，最多 3 个。
+ */
+function cardLinks(g) {
+  const raw = (g.card && Array.isArray(g.card.links)) ? g.card.links : [];
+  const out = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue;
+    const href = typeof it.href === 'string' ? it.href.trim() : '';
+    const label = typeof it.label === 'string' ? it.label.trim().slice(0, 12) : '';
+    if (!label || !href) continue;
+    if (href.charAt(0) !== '/' || href.charAt(1) === '/') continue;   // 只允许站内路径，挡住 http:// 与协议相对写法
+    out.push({ label, href, icon: typeof it.icon === 'string' ? it.icon.slice(0, 2) : '' });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 // 游戏都发现了，据此生成静态挂载点（每个游戏的 client/ 与 shared/）
 MOUNTS = buildMounts();
 
@@ -319,6 +358,7 @@ function handleMessage(client, msg) {
       t: 'hello', id: client.id, name: client.name, ip: client.ip,
       inviteCode: client.inviteCode, serverTime: Date.now()
     });
+    friends.onHello(client);   // 好友系统：登记在线状态并下发全量好友数据
     return;
   }
 
@@ -349,11 +389,12 @@ const server = http.createServer((req, res) => {
         entry: g.entry,
         desc: (g.card && g.card.desc) || '',
         tags: (g.card && Array.isArray(g.card.tags)) ? g.card.tags : [],
-        art: cardArtUrl(g)
+        art: cardArtUrl(g),
+        links: cardLinks(g)              // 游戏的"第二个页面"（如关卡编辑器），没有就是空数组
       })),
       routeConflicts: routeConflicts,     // 非空说明有游戏消息撞车了，测试脚本会断言它为空
       gameWarnings: gameWarnings
-    }, stats)));
+    }, friends.stats(), stats)));
     return;
   }
   serveStatic(req, res);
@@ -362,10 +403,21 @@ const server = http.createServer((req, res) => {
 /* ---------------- WebSocket ---------------- */
 ws.attach(server, (conn, req) => {
   const id = nextClientId++;
+  /*
+   * 仅测试钩子（WB_TEST_HOOKS=1 才生效）：允许用 ?fip= 覆盖 perceived IP。
+   * 好友身份以 IP 为单位，好友自检要在同一台电脑上模拟多台机器，
+   * 而沙箱/机房环境往往禁止连接 127.0.0.2 等地址 —— 与 tank.teleport 同一思路。
+   * 正式服无视该参数，IP 一律取真实 socket 对端地址。
+   */
+  let ip = conn.ip;
+  if (process.env.WB_TEST_HOOKS) {
+    const m = /(?:\?|&)fip=(\d{1,3}(?:\.\d{1,3}){3})/.exec(req.url || '');
+    if (m) ip = m[1];
+  }
   const client = {
     id,
     conn,
-    ip: conn.ip,
+    ip,
     name: '玩家' + id,
     inviteCode: '',
     room: null,
@@ -390,6 +442,7 @@ ws.attach(server, (conn, req) => {
   conn.on('close', () => {
     clients.delete(id);
     if (client.inviteCode) byInviteCode.delete(client.inviteCode);
+    friends.onClose(client);
     eachHub((hub) => { if (hub.onClose) hub.onClose(client); });
   });
 });

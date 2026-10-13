@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>关卡编辑器 · 方块躲避</title>
+<link rel="stylesheet" href="/shared/app.css">
+<link rel="stylesheet" href="/dodge/dodge.css">
+<link rel="stylesheet" href="/dodge/editor.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 方块躲避 / 关卡编辑器</span></div>
+  <div class="topbar-right">
+    <button class="btn tiny ghost" id="btnHelp">❓ 怎么用</button>
+    <a class="btn tiny ghost" href="/dodge/">▶ 去玩游戏</a>
+    <a class="btn tiny ghost" href="/">返回主页</a>
+  </div>
+</div>
+
+<div class="ed-wrap">
+
+  <!-- 顶部：尺寸 + 关卡信息 + 存档 -->
+  <div class="ed-top panel">
+    <div class="ed-group">
+      <span class="ed-lbl">关卡尺寸</span>
+      <input type="number" class="field tiny" id="inCols" min="4" max="60" value="20">
+      <span class="dim">×</span>
+      <input type="number" class="field tiny" id="inRows" min="4" max="45" value="15">
+      <button class="btn tiny" id="btnResize">重建关卡</button>
+    </div>
+    <div class="ed-group">
+      <span class="ed-lbl">关卡名</span>
+      <input type="text" class="field name" id="inName" maxlength="20" value="我的关卡">
+      <span class="ed-lbl">难度</span>
+      <select class="field tiny" id="inDiff">
+        <option value="1">★</option>
+        <option value="2">★★</option>
+        <option value="3">★★★</option>
+        <option value="4">★★★★</option>
+        <option value="5">★★★★★</option>
+      </select>
+    </div>
+    <div class="ed-group right">
+      <button class="btn tiny ghost" id="btnCheck">🔍 检查能否通关</button>
+      <button class="btn tiny ghost" id="btnPreview">▶ 预览路径</button>
+      <button class="btn tiny ghost" id="btnTest">🎮 试玩</button>
+      <button class="btn tiny ghost" id="btnLibrary">📚 关卡库</button>
+      <button class="btn tiny ghost" id="btnImport">📂 导入</button>
+      <button class="btn tiny ok" id="btnSave">💾 保存</button>
+    </div>
+  </div>
+
+  <div class="ed-main">
+
+    <!-- 左：工具栏 -->
+    <div class="ed-tools panel">
+      <h3>编辑工具</h3>
+      <div class="tool-list" id="toolList">
+        <button class="tool" data-tool="select"><i>⬚</i>选择 / 查看</button>
+        <button class="tool" data-tool="wall"><i>■</i>墙体</button>
+        <button class="tool" data-tool="spawn"><i>◉</i>出生点</button>
+        <button class="tool" data-tool="checkpoint"><i>◇</i>复活点</button>
+        <button class="tool" data-tool="goal"><i>★</i>终点</button>
+        <button class="tool" data-tool="obstacle"><i>●</i>圆形障碍</button>
+      </div>
+
+      <div class="tool-tip">
+        <b>墙体</b>：点一下放墙，再点一下取消<br>
+        <b>出生点 / 复活点 / 终点</b>：点格子放，再点取消<br>
+        <b>圆形障碍</b>：点空格子放一个新障碍；点已有障碍进入<b>路径编辑</b><br>
+        <b>右键</b>点障碍 = 删除整个障碍<br>
+        <b>路径点</b>：点空格子依次加路径点，点已有的小圆点可删掉该点
+      </div>
+
+      <div class="ed-sub">
+        <h4>操作</h4>
+        <button class="btn tiny ghost block" id="btnClearObstacles">清空所有障碍</button>
+        <button class="btn tiny ghost block" id="btnClearAll">清空关卡内容</button>
+      </div>
+
+      <div class="ed-sub">
+        <h4>统计</h4>
+        <div class="stats" id="stats"></div>
+      </div>
+    </div>
+
+    <!-- 中：画布 -->
+    <div class="ed-center">
+      <div class="ed-canvas-wrap">
+        <canvas id="edCv"></canvas>
+        <div class="ed-empty" id="edEmpty">
+          <p>先设定关卡尺寸，点「<b>重建关卡</b>」开始编辑</p>
+          <p class="dim small">重建会清空当前内容（会先问你一次）</p>
+        </div>
+        <div class="ed-pathbar hidden" id="pathBar">
+          <span id="pathInfo"></span>
+          <button class="btn tiny primary" id="btnEndPath">结束路径编辑</button>
+        </div>
+      </div>
+      <div class="ed-status" id="statusLine">—</div>
+      <div class="ed-issues" id="issues"></div>
+    </div>
+
+    <!-- 右：属性面板 -->
+    <div class="ed-props panel">
+      <h3>属性</h3>
+      <div id="propBody" class="prop-body">
+        <p class="dim small">选中一个圆形障碍后，这里可以调速度、往返/循环、半径，并编辑巡逻路径。</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 关卡库弹窗 -->
+<div class="wb-mask hidden" id="libMask">
+  <div class="wb-dialog" style="max-width:560px">
+    <div class="wb-dialog-head"><h3>关卡库</h3><button class="wb-x" id="libClose">×</button></div>
+    <div class="wb-dialog-body">
+      <div class="lib-sec">
+        <h4>内置关卡（点一下载入编辑）</h4>
+        <div class="lib-list" id="libBuiltin"></div>
+      </div>
+      <div class="lib-sec">
+        <h4>我保存的关卡（存在本机浏览器里）</h4>
+        <div class="lib-list" id="libMine"></div>
+        <div class="row" style="margin-top:10px;gap:8px">
+          <button class="btn tiny ghost" id="btnExport">⬇ 导出为 .json 文件</button>
+          <button class="btn tiny ghost" id="btnCopyJson">📋 复制 JSON</button>
+        </div>
+      </div>
+      <div class="lib-sec">
+        <h4>从 JSON 文本导入</h4>
+        <textarea class="field" id="inJson" rows="6" placeholder="把导出的关卡 JSON 粘在这里，点下面的按钮导入"></textarea>
+        <div class="row" style="margin-top:10px;gap:8px">
+          <button class="btn tiny primary" id="btnImportText">导入这段 JSON</button>
+          <label class="btn tiny ghost" style="cursor:pointer">
+            📂 选择 .json 文件<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wb-mask hidden" id="helpMask">
+  <div class="wb-dialog" style="max-width:620px">
+    <div class="wb-dialog-head"><h3>编辑器怎么用</h3><button class="wb-x" id="helpClose">×</button></div>
+    <div class="wb-dialog-body help-body">
+      <ol>
+        <li><b>先建关卡空间</b>：在顶部填列数/行数，点「重建关卡」。建好后就能编辑了（重建会清空内容）。</li>
+        <li><b>放元素</b>：左侧选工具，然后在网格上点。墙、出生点、复活点、终点都是点一下放、再点取消。</li>
+        <li><b>放障碍并画巡逻路径</b>：选「圆形障碍」→ 点一个空格子放下障碍，此时自动进入<b>路径编辑</b>；
+          接着按顺序点你想让它经过的格子，路径点之间会用虚线连起来并标出方向。
+          点路径上的小圆点可以删掉那个点；右键点障碍可以删掉整个障碍。</li>
+        <li><b>调参数</b>：选中障碍后，右侧能调<b>速度</b>（20~300 像素/秒）、<b>往返/循环</b>、<b>半径</b>。</li>
+        <li><b>预览</b>：点顶部「预览路径」让障碍按路径动起来，再点一下停止。</li>
+        <li><b>保存前的校验</b>：<b>至少要有一个出生点和一个复活点</b>，否则不能保存；
+          出生点/复活点/终点压在墙上、和障碍巡逻点重合等问题会直接列在下方面板里。</li>
+        <li><b>保存去哪</b>：点「保存」存进本机浏览器（游戏里会以「自制关卡」出现，可以单人和本地多人玩），
+          也可以用「关卡库 → 导出为 .json 文件」把关卡发给别人；
+          想内置到游戏里，就把导出的 JSON 交给管理员，替换 <code>games/dodge/shared/levels.json</code>。</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="wb-toasts" id="wb-toasts"></div>
+
+<script src="/dodge/shared/dodgecore.js"></script>
+<script src="/shared/core.js"></script>
+<script src="/dodge/editor.js"></script>
+</body>
+</html>

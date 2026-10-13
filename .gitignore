@@ -11,6 +11,9 @@ tools/shots/
 _net.txt
 网站链接.txt
 
+# ---- 好友系统运行时数据（好友关系与聊天记录，每台服务器各一份） ----
+platform/server/friends-data.json
+
 # ---- 日志 ----
 *.log
 npm-debug.log*
@@ -19,3 +22,6 @@ npm-debug.log*
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# ---- 交付产物（压缩包 / git bundle，不属于源码） ----
+delivery/
