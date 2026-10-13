@@ -188,6 +188,11 @@ async function startServer() {
     ok('没有消息路由冲突', Array.isArray(st.routeConflicts) && st.routeConflicts.length === 0,
       JSON.stringify(st.routeConflicts));
 
+    /* 契约上的提醒（没声明 title、entry 与目录名不一致、Hub.card.links 被丢掉等）。
+       它是"非致命但会让加游戏的人踩坑"的信号，自检里必须为空 —— 否则就是有人的声明写错了。 */
+    ok('没有游戏契约警告（gameWarnings 为空）',
+      Array.isArray(st.gameWarnings) && st.gameWarnings.length === 0, JSON.stringify(st.gameWarnings));
+
     /* 主页只应该有一个空容器，卡片全部由脚本渲染 —— 这是"新游戏上不了主页"的根因回归 */
     const homeRes = await fetch(base + '/');
     const home = await homeRes.text();
@@ -212,6 +217,21 @@ async function startServer() {
       ok('主页没有写死 ' + g.entry + ' 入口（卡片由 /api/status 渲染）',
         home.indexOf('href="' + g.entry + '"') < 0);
       ok(g.title + ' · 目录名与 entry 一致', g.entry === '/' + g.name + '/', g.entry);
+
+      /*
+       * 卡片附属入口 = 游戏的"第二个页面"（方块躲避的关卡编辑器就是这类）。
+       * 服务端只放行站内相对路径，所以这里既验格式也验它真的能打开 ——
+       * 免得主页卡片上挂一个 404，点了才发现。
+       */
+      const links = Array.isArray(g.links) ? g.links : [];
+      ok(g.title + ' · 附属入口不超过 3 个', links.length <= 3, links.length + ' 个');
+      for (const l of links) {
+        ok(g.title + ' · 附属入口是站内相对路径（' + l.href + '）',
+          typeof l.href === 'string' && l.href.charAt(0) === '/' && l.href.charAt(1) !== '/',
+          l.href);
+        const lr = await fetch(base + l.href);
+        ok('GET ' + l.href + '（' + g.title + ' · ' + l.label + '）', lr.status === 200, 'HTTP ' + lr.status);
+      }
     }
 
     console.log('\n== F. 平台通用库 ==');

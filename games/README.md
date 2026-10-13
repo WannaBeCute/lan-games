@@ -123,6 +123,44 @@ module.exports = GuessHub;
 | `WB.ui` | `WB.ui.toast(msg)`、设置弹窗 `WB.ui.openSettings()` |
 | `WB.keys` | 键盘捕获与"点一下再按新键"的改键 |
 | `/shared/app.css` | `.btn` `.panel` `.topbar` `.net-badge` 等通用样式 |
+| `WB.Friends` | 好友系统（见下） |
+
+### 接入好友系统（可选，强烈建议）
+
+好友关系、聊天、组队邀请都由平台层实现，**所有游戏通用**。页面只要两步就能接上：
+
+```html
+<link rel="stylesheet" href="/shared/friends.css">   <!-- 好友面板 / 左下角弹窗 / 聊天小窗 -->
+<script src="/shared/friends.js"></script>           <!-- 放在 net.js 之后 -->
+```
+
+```js
+var net = new WB.Net();
+WB.Friends.boot(net);          // 顶栏自动多出「👥 好友」按钮
+```
+
+想支持「好友组队邀请免邀请码直达」，再向好友系统登记本游戏的能力（平台因此永远不认识任何游戏名）：
+
+```js
+WB.Friends.registerGame({
+  name: 'guess',                 // 游戏标识（随邀请发给对方，对方按它跳转）
+  label: '猜数字',               // 显示名
+  entry: '/guess/',              // 受邀方不在这个页面时的跳转地址
+  param: 'join',                 // 跳转时带的参数名
+  canInvite: function () {       // 现在能不能发邀请 → { data, text }（返回 null 表示暂不可邀请）
+    return room ? { data: { room: room.code }, text: '房间 ' + room.code } : null;
+  },
+  accept: function (data) {      // 受邀方就在本页面 → 直接入座（例如 net.send({t:'guess.join',...})）
+    net.send({ t: 'guess.join', room: data.room });
+  }
+});
+```
+
+受邀方在别的页面时，会跳转到 `entry + '?' + param + '=' + JSON.stringify(data)`，
+游戏在自己页面启动时解析该参数即可（坦克的 `?join=`、五子棋的 `?invite=` 就是这么做的）。
+
+> 注意：好友以 **IP** 为身份单位（同一台电脑重开页面、换游戏好友都不丢），
+> 所以 `data` 里放"房间号 / 邀请码"这类**当前会话**信息，不要放只能靠连接 id 定位的东西。
 
 ---
 

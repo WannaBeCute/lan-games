@@ -1114,6 +1114,32 @@
     S.net = new WB.Net();
     WB.bindNetBadge($('netBadge'), S.net);
 
+    /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
+    WB.Friends.boot(S.net);
+    // 向好友系统登记「组队邀请」能力：好友点接受后直达房间，不用报 4 位房间号
+    WB.Friends.registerGame({
+      name: 'tank',
+      label: '坦克大战',
+      entry: '/tank/',
+      param: 'join',
+      // 只有在房间大厅里才能邀请（对局中/已开局的房间进不去）
+      canInvite: function () {
+        var room = S.room;
+        if (room && room.code && (room.state === 'lobby' || room.state === 'over')) {
+          return { data: { room: room.code }, text: '房间 ' + room.code };
+        }
+        return null;
+      },
+      // 受邀方就在本页面：直接发送加入请求（服务端会自动先退出旧房间）
+      accept: function (data) {
+        var code = String((data && data.room) || '').trim();
+        if (!/^\d{4}$/.test(code)) { WB.ui.toast('邀请信息不完整', 'err'); WB.audio.play('error'); return; }
+        if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
+        WB.ui.toast('正在加入好友的房间 ' + code + '…', 'ok');
+        S.net.send({ t: 'tank.join', code: code });
+      }
+    });
+
     S.net.on('tank.created', function (m) {
       WB.audio.play('click');
       WB.ui.toast('房间已创建：' + m.code, 'ok');
@@ -1122,7 +1148,8 @@
       renderLobbyConfig();
     });
     S.net.on('tank.joined', function (m) {
-      WB.ui.toast('已加入房间：' + m.code, 'ok');
+      WB.ui.toast((S.autoJoinNote === m.code ? '已通过好友邀请加入房间：' : '已加入房间：') + m.code, 'ok');
+      S.autoJoinNote = null;
       show('scr-lobby');
       renderLobbyKeys();
       renderLobbyConfig();
@@ -1265,6 +1292,11 @@
       else { WB.ui.toast('房间号：' + code, 'ok'); }
       WB.audio.play('click');
     };
+    // 邀请好友：打开好友面板，对好友点「邀请组队」即可直达本房间（不用报房间号）
+    $('btnInviteFriend').onclick = function () {
+      WB.audio.play('click');
+      if (WB.friends) WB.friends.openPanel();
+    };
     $('btnStartGame').onclick = function () { WB.audio.play('click'); S.net.send({ t: 'tank.start' }); };
 
     $('btnReady').onclick = function () {
@@ -1354,6 +1386,22 @@
 
   /* ================= 启动 ================= */
   initNet();
+
+  /* 好友组队邀请直达：URL 带 ?join={"room":"1234"} 时自动加入（免输房间号）。
+   * net.send 在未连上时会自动排队，连上后按顺序发出。 */
+  (function autoJoinFromFriendInvite() {
+    var raw = '';
+    try { raw = new URLSearchParams(location.search).get('join') || ''; } catch (e) { return; }
+    if (!raw) return;
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { data = { room: raw }; }
+    var code = String((data && data.room) || '').trim();
+    if (!/^\d{4}$/.test(code)) return;
+    S.autoJoinNote = code;
+    S.net.send({ t: 'tank.join', code: code });
+    WB.ui.toast('正在通过好友邀请加入房间 ' + code + '…', 'ok');
+  })();
+
   bindUi();
   refreshBest();
   fitCanvas();

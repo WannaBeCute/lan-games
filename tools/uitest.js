@@ -159,13 +159,19 @@ async function getTarget(port, retry) {
       "  for (let i = 0; i < 40; i++) { if (document.querySelectorAll('.game-card').length) break; await new Promise(r => setTimeout(r, 100)); }" +
       "  const s = await (await fetch('/api/status')).json();" +
       "  const as = Array.from(document.querySelectorAll('.game-card'));" +
+      "  const extra = as.map(c => Array.from(c.querySelectorAll('.card-extra a')).map(x => x.getAttribute('href')));" +
+      "  const codes = [];" +
+      "  for (const h of extra.flat()) { try { codes.push((await fetch(h)).status); } catch (e) { codes.push(0); } }" +
       "  return JSON.stringify({" +
       "    n: as.length," +
       "    want: s.games.map(g => g.entry)," +
-      "    hrefs: as.map(a => a.getAttribute('href'))," +
-      "    titles: as.map(a => (a.querySelector('h2') || {}).textContent || '')," +
-      "    tags: as.map(a => a.querySelectorAll('.tags li').length)," +
-      "    artOk: as.every(a => { const i = a.querySelector('.art img'); return !!i && i.naturalWidth > 0; })" +
+      "    hrefs: as.map(c => { const m = c.querySelector('a.card-main'); return m ? m.getAttribute('href') : ''; })," +
+      "    titles: as.map(c => (c.querySelector('h2') || {}).textContent || '')," +
+      "    tags: as.map(c => c.querySelectorAll('.tags li').length)," +
+      "    artOk: as.every(c => { const i = c.querySelector('.art img'); return !!i && i.naturalWidth > 0; })," +
+      "    extra: extra," +
+      "    wantExtra: s.games.map(g => (g.links || []).map(l => l.href).join('|'))," +
+      "    extraCodes: codes" +
       "  });" +
       "})()"
     ));
@@ -174,6 +180,15 @@ async function getTarget(port, retry) {
     ok('每张卡片都渲染出标题与标签', homeCards.titles.every(Boolean) && homeCards.tags.every(n => n > 0),
       homeCards.titles.join(' / ') + '  标签数 ' + homeCards.tags.join(','));
     ok('卡片插画（svg）真的加载出来了', homeCards.artOk === true);
+    /* 附属入口 = 游戏的"第二个页面"（如方块躲避的关卡编辑器），由 Hub.card.links 声明 */
+    ok('卡片附属入口与接口声明一致',
+      homeCards.extra.map(a => a.join('|')).join(',') === homeCards.wantExtra.join(','),
+      JSON.stringify(homeCards.extra));
+    ok('卡片上确实有附属入口（如关卡编辑器）', homeCards.extra.some(a => a.length > 0),
+      JSON.stringify(homeCards.extra));
+    ok('附属入口指向的页面都能打开（没有死链）',
+      homeCards.extraCodes.length > 0 && homeCards.extraCodes.every(c => c === 200),
+      JSON.stringify(homeCards.extraCodes));
     const badge = await evalJs("document.getElementById('netBadge').textContent");
     ok('WebSocket 已连接', /已连接/.test(badge), '状态：' + badge);
     const L = JSON.parse(await evalJs("JSON.stringify({shown:!document.getElementById('lanBanner').classList.contains('hidden'),url:document.getElementById('lanUrl').textContent})"));

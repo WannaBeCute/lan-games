@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>机房小游戏</title>
 <link rel="stylesheet" href="/shared/app.css">
+<link rel="stylesheet" href="/shared/friends.css">
 <style>
   .hub-head-right { display: flex; align-items: center; gap: 10px; }
   .hub-tips { max-width: 1080px; margin: 34px auto 0; padding: 0 24px; }
@@ -78,7 +79,9 @@
         <h4>怎么联机</h4>
         <p>所有电脑连接同一个局域网，统一访问服务端地址（如 <code>http://192.168.1.5:8080</code>）。<br>
            · 坦克大战：<b>4 位房间号</b>，房主建房间→同学输入房间号加入。<br>
-           · 五子棋：每人有一个 <b>IP 专属邀请码</b>，输入对方邀请码即可发起对局。</p>
+           · 五子棋：每人有一个 <b>IP 专属邀请码</b>，输入对方邀请码即可发起对局。<br>
+           · 方块躲避：<b>4 位房间号</b>联机（房主选关、全员到达才通关），也能自己做关卡（顶栏「关卡编辑器」）。<br>
+           · 好友系统：顶栏「👥 好友」→ 在线人员里点「加好友」，成为好友后可直接聊天、直接组队，<b>不用再报邀请码</b>。</p>
       </div>
       <div class="panel">
         <h4>操作说明</h4>
@@ -102,6 +105,7 @@
 
 <script src="/shared/core.js"></script>
 <script src="/shared/net.js"></script>
+<script src="/shared/friends.js"></script>
 <script>
 (function () {
   var WB = window.WB;
@@ -109,6 +113,8 @@
 
   var net = new WB.Net();
   WB.bindNetBadge(document.getElementById('netBadge'), net);
+  // 好友系统：顶栏「👥 好友」→ 在线人员（完整 IP）→ 加好友 → 组队 / 聊天，所有游戏通用
+  WB.Friends.boot(net);
 
   /* 连接信息和状态统计是分两条路来的，攒齐了一次性画出来 */
   var hello = null, status = null;
@@ -135,10 +141,15 @@
   }
 
   function gameCard(g) {
+    /* 卡片外壳是 div 而不是 a：因为要放「附属入口」（如关卡编辑器），
+       而 HTML 不允许 a 里再套 a。主体仍然是整块可点的主链接 .card-main。 */
+    var card = document.createElement('div');
+    card.className = 'game-card';
+    card.setAttribute('data-game', g.name);
+
     var a = document.createElement('a');
-    a.className = 'game-card';
+    a.className = 'card-main';
     a.href = g.entry;
-    a.setAttribute('data-game', g.name);
 
     var art = document.createElement('div');
     art.className = 'art';
@@ -178,7 +189,22 @@
     go.className = 'go';
     go.textContent = '进入游戏';
     a.appendChild(go);
-    return a;
+    card.appendChild(a);
+
+    /* 附属入口由各游戏用 Hub.card.links 声明，服务端已过滤成站内相对路径 */
+    if (g.links && g.links.length) {
+      var box = document.createElement('div');
+      box.className = 'card-extra';
+      g.links.forEach(function (l) {
+        var la = document.createElement('a');
+        la.href = l.href;
+        la.setAttribute('data-extra', g.name);
+        la.textContent = (l.icon ? l.icon + ' ' : '') + l.label;   // 依旧纯文本，不拼 innerHTML
+        box.appendChild(la);
+      });
+      card.appendChild(box);
+    }
+    return card;
   }
 
   function renderGames(list) {

@@ -389,6 +389,8 @@
 
   /* ================= 联机 ================= */
   var NET = null;
+  /** 好友组队邀请直达：从 /gomoku/?invite=... 打开时，拿到自己的邀请码后自动向对方发起对局 */
+  var PENDING_FRIEND_INVITE = null;
   function SEND(o) { if (NET) NET.send(o); }
 
   function onHello() {
@@ -402,6 +404,16 @@
     var ip = String(m.ip || '');
     var masked = ip.split('.').map(function (p, i) { return i < 2 ? p : '···'; }).join('.');
     $('myIp').textContent = 'IP ' + masked + (m.online ? ' · 在线 ' + m.online + ' 人' : '');
+    // 通过好友邀请跳转过来的：直接替玩家发起对局，不用手动输邀请码
+    if (PENDING_FRIEND_INVITE) {
+      var code = PENDING_FRIEND_INVITE;
+      PENDING_FRIEND_INVITE = null;
+      if (code === G.myCode) { WB.ui.toast('不能邀请自己', 'err'); return; }
+      show('scr-online');
+      $('waitTip').textContent = '';
+      SEND({ t: 'gomoku.invite', code: code });
+      WB.ui.toast('已接受好友邀请，正在向 ' + code + ' 发起对局…', 'ok');
+    }
   }
 
   function applyState(m) {
@@ -628,6 +640,32 @@
   function initNet() {
     NET = new WB.Net();
     WB.bindNetBadge($('netBadge'), NET);
+
+    /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
+    WB.Friends.boot(NET);
+    // 向好友系统登记「组队邀请」能力：好友点接受后直接开局，不用报邀请码
+    WB.Friends.registerGame({
+      name: 'gomoku',
+      label: '五子棋',
+      entry: '/gomoku/',
+      param: 'invite',
+      // 拿到自己的邀请码后才能邀请（服务端据此找到你）
+      canInvite: function () {
+        if (!G.myCode) return null;
+        return { data: { code: G.myCode }, text: '五子棋对局' };
+      },
+      // 受邀方就在本页面：直接拿对方的邀请码发起对局
+      accept: function (data) {
+        var code = String((data && data.code) || '').toUpperCase().trim();
+        if (code.length < 4) { WB.ui.toast('邀请信息不完整', 'err'); WB.audio.play('error'); return; }
+        if (code === G.myCode) { WB.ui.toast('不能邀请自己', 'err'); return; }
+        show('scr-online');
+        $('waitTip').textContent = '';
+        SEND({ t: 'gomoku.invite', code: code });
+        WB.ui.toast('已接受好友邀请，正在发起对局…', 'ok');
+      }
+    });
+
     NET.on('hello', onHello);
     NET.on('gomoku.code', onCode);
     NET.on('gomoku.error', function (m) {
@@ -713,6 +751,11 @@
       SEND({ t: 'gomoku.invite', code: code });
       WB.audio.play('click');
     };
+    // 邀请好友：打开好友面板，对好友点「邀请组队」即可直接开局（不用报邀请码）
+    $('btnInviteFriend').onclick = function () {
+      WB.audio.play('click');
+      if (WB.friends) WB.friends.openPanel();
+    };
     $('inviteCode').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') $('btnInvite').click();
     });
@@ -757,6 +800,19 @@
   bindUi();
   bindBoard();
   initNet();
+
+  /* 好友组队邀请直达：URL 带 ?invite=邀请码 时，等服务端下发我的邀请码后自动发起对局 */
+  (function autoInviteFromFriend() {
+    var raw = '';
+    try { raw = new URLSearchParams(location.search).get('invite') || ''; } catch (e) { return; }
+    if (!raw) return;
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { data = { code: raw }; }
+    var code = String((data && data.code) || '').toUpperCase().trim();
+    if (code.length < 4) return;
+    PENDING_FRIEND_INVITE = code;
+  })();
+
   resizeBoard();
   window.__GOMOKU_DEBUG = {
     G: G, S: SIZE, CELL: CELL, PAD: PAD, px: px, render: render,

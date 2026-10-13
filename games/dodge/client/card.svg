@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 148" width="600" height="148" role="img" aria-label="方块躲避：方格玩家在圆形巡逻障碍之间穿行，右侧是绿色终点">
+  <defs>
+    <pattern id="dodgeGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="40" height="40" fill="none" stroke="#7f9ad0" stroke-opacity="0.10" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="dodgeGoal" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#2fd39b" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#2fd39b" stop-opacity="0.06"/>
+    </radialGradient>
+    <filter id="dodgeGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="600" height="148" fill="#0a0d13"/>
+  <rect width="600" height="148" fill="url(#dodgeGrid)"/>
+
+  <!-- 上下两侧的墙 -->
+  <g fill="#2b3648">
+    <rect x="0" y="0" width="600" height="16"/>
+    <rect x="0" y="132" width="600" height="16"/>
+    <rect x="0" y="0" width="16" height="148"/>
+    <rect x="584" y="0" width="16" height="148"/>
+    <rect x="296" y="16" width="40" height="116"/>
+  </g>
+
+  <!-- 终点格 -->
+  <g>
+    <rect x="504" y="56" width="40" height="40" fill="url(#dodgeGoal)" stroke="#2fd39b" stroke-width="2" rx="3"/>
+    <circle cx="524" cy="76" r="5" fill="#2fd39b"/>
+  </g>
+
+  <!-- 巡逻的圆形障碍 -->
+  <g filter="url(#dodgeGlow)">
+    <circle cx="176" cy="46" r="18" fill="#e74c3c" stroke="#8e2b21" stroke-width="2"/>
+    <circle cx="176" cy="104" r="18" fill="#e74c3c" stroke="#8e2b21" stroke-width="2"/>
+    <circle cx="392" cy="76" r="18" fill="#e74c3c" stroke="#8e2b21" stroke-width="2"/>
+  </g>
+
+  <!-- 方格玩家（4 人配色） -->
+  <g filter="url(#dodgeGlow)">
+    <rect x="56" y="58" width="36" height="36" rx="7" fill="#4c8dff" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+    <rect x="120" y="58" width="36" height="36" rx="7" fill="#2fd39b" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+    <rect x="232" y="58" width="36" height="36" rx="7" fill="#f5a524" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+    <rect x="440" y="58" width="36" height="36" rx="7" fill="#c85dff" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+  </g>
+</svg>
