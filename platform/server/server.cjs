@@ -21,6 +21,7 @@ const crypto = require('crypto');
 
 const ws = require('./ws');
 const Friends = require('./friends.cjs');
+const Chat = require('./chat.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');            // 仓库根
 const WEB_DIR = path.join(ROOT, 'platform', 'web');          // 平台前端（主页 + 通用库）
@@ -214,8 +215,8 @@ const routeConflicts = [];              // 同名消息被两个游戏抢（记�
 const gameWarnings = [];                // 契约上的问题：不致命，但会让"加游戏的人"踩坑
 
 /*
- * 平台层自己的消息路由：好友系统（所有游戏通用，身份以 IP 为单位）。
- * 先于游戏注册 —— 万一哪个游戏也用了 friends. 前缀，下面的冲突机制会当面指出。
+ * 平台层自己的消息路由：好友系统 + 频道聊天（所有游戏通用）。
+ * 先于游戏注册 —— 万一哪个游戏也用了 friends. / chat. 前缀，下面的冲突机制会当面指出。
  */
 const friends = new Friends(ctx);
 for (const type of Object.keys(Friends.routes)) {
@@ -224,6 +225,15 @@ for (const type of Object.keys(Friends.routes)) {
   routeOwner.set(type, 'platform(好友系统)');
 }
 console.log('[platform] 已装配好友系统（' + Object.keys(Friends.routes).length + ' 条消息路由，好友数据所有游戏通用）');
+
+/* 频道聊天：房间内所有人可见的公共聊天（频道是临时的，房间没了就回收） */
+const chat = new Chat(ctx);
+for (const type of Object.keys(Chat.routes)) {
+  const method = Chat.routes[type];
+  routes.set(type, (client, msg) => chat[method](client, msg));
+  routeOwner.set(type, 'platform(频道聊天)');
+}
+console.log('[platform] 已装配频道聊天（' + Object.keys(Chat.routes).length + ' 条消息路由，房间内所有人可见）');
 
 /** 目录名会直接变成 URL 前缀，撞上平台保留路径会让静态挂载互相遮蔽 */
 const RESERVED_NAMES = new Set(['shared', 'api', 'platform', 'games', 'tools']);
@@ -394,7 +404,7 @@ const server = http.createServer((req, res) => {
       })),
       routeConflicts: routeConflicts,     // 非空说明有游戏消息撞车了，测试脚本会断言它为空
       gameWarnings: gameWarnings
-    }, friends.stats(), stats)));
+    }, friends.stats(), chat.stats(), stats)));
     return;
   }
   serveStatic(req, res);
@@ -443,6 +453,7 @@ ws.attach(server, (conn, req) => {
     clients.delete(id);
     if (client.inviteCode) byInviteCode.delete(client.inviteCode);
     friends.onClose(client);
+    chat.onClose(client);       // 频道聊天：把这个连接从所有频道里摘掉（空频道回收）
     eachHub((hub) => { if (hub.onClose) hub.onClose(client); });
   });
 });

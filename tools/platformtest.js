@@ -199,6 +199,13 @@ async function startServer() {
     ok('GET / 可访问', homeRes.status === 200, 'HTTP ' + homeRes.status);
     ok('主页有动态卡片容器 #hubGrid', home.indexOf('id="hubGrid"') >= 0);
     ok('主页引用了平台通用库', home.indexOf('/shared/core.js') >= 0 && home.indexOf('/shared/net.js') >= 0);
+    ok('主页引用了聊天控件（所有页面常驻）',
+      home.indexOf('/shared/chat.js') >= 0 && home.indexOf('/shared/chat.css') >= 0);
+
+    /* 平台层通用能力：好友系统 + 频道聊天（游戏都能用，但 platform/ 不认识任何游戏） */
+    ok('/api/status 带频道聊天统计',
+      typeof st.chatChannels === 'number' && typeof st.chatMembers === 'number',
+      JSON.stringify({ chatChannels: st.chatChannels, chatMembers: st.chatMembers }));
 
     console.log('\n== E. 每个游戏的入口与卡片资源 ==');
     for (const g of (st.games || [])) {
@@ -235,9 +242,17 @@ async function startServer() {
     }
 
     console.log('\n== F. 平台通用库 ==');
-    for (const p of ['/shared/core.js', '/shared/net.js', '/shared/app.css']) {
+    for (const p of ['/shared/core.js', '/shared/net.js', '/shared/app.css',
+                     '/shared/friends.js', '/shared/friends.css', '/shared/chat.js', '/shared/chat.css']) {
       const r = await fetch(base + p);
       ok('GET ' + p, r.status === 200, 'HTTP ' + r.status);
+    }
+
+    /* 每个游戏页面都必须挂上聊天控件：需求是"所有页面都有" */
+    for (const g of (st.games || [])) {
+      const html = await (await fetch(base + g.entry)).text();
+      ok(g.title + ' · 页面引入了聊天控件',
+        html.indexOf('/shared/chat.js') >= 0 && html.indexOf('/shared/chat.css') >= 0);
     }
   } finally {
     if (proc) { try { proc.kill(); } catch (e) { /* noop */ } }

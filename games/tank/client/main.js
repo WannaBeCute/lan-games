@@ -1116,6 +1116,8 @@
 
     /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
     WB.Friends.boot(S.net);
+    /* ---------- 聊天控件（左下角，平台层通用）：房间聊天走频道 ---------- */
+    WB.Chat.boot(S.net);
     // 向好友系统登记「组队邀请」能力：好友点接受后直达房间，不用报 4 位房间号
     WB.Friends.registerGame({
       name: 'tank',
@@ -1143,6 +1145,7 @@
     S.net.on('tank.created', function (m) {
       WB.audio.play('click');
       WB.ui.toast('房间已创建：' + m.code, 'ok');
+      WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
       show('scr-lobby');
       renderLobbyKeys();
       renderLobbyConfig();
@@ -1150,11 +1153,14 @@
     S.net.on('tank.joined', function (m) {
       WB.ui.toast((S.autoJoinNote === m.code ? '已通过好友邀请加入房间：' : '已加入房间：') + m.code, 'ok');
       S.autoJoinNote = null;
+      WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
       show('scr-lobby');
       renderLobbyKeys();
       renderLobbyConfig();
     });
     S.net.on('tank.room', function (m) {
+      // 刷新页面后回到同一房间：把聊天频道也接回来
+      if (m.code) WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
       if (m.state === 'lobby' || m.state === 'over') renderLobby(m);
       else S.room = m;
     });
@@ -1165,6 +1171,7 @@
       WB.ui.toast(m.msg || ((m.name || '对方') + ' 离开了对局'), 'err');
       WB.audio.play('error');
       S.room = null;
+      WB.Chat.leaveRoom();          // 房间被回收 → 聊天频道一起关掉
       quitToMenu();
     });
     S.net.on('tank.round', onNetRound);
@@ -1283,6 +1290,7 @@
       S.net.send({ t: 'tank.leave' });
       S.room = null;
       S.online = null;
+      WB.Chat.leaveRoom();          // 退出房间 → 关掉本局聊天频道
       show('scr-menu');
     };
     $('btnCopyCode').onclick = function () {

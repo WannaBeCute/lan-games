@@ -213,7 +213,7 @@ function peer(port) {
     // 打开好友面板 → 我的好友
     await evalJs("document.getElementById('btnFriends').click()");
     ok('好友面板打开', await waitUntil("!!document.getElementById('wb-friends-mask')"));
-    await evalJs("document.querySelector('[data-tab=\"friends\"]').click()");
+    await evalJs("document.querySelector('.fb-tab[data-tab=\"friends\"]').click()");
     await sleep(300);
     const friendRow = await evalJs(
       "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +

@@ -332,6 +332,7 @@
   function toMenu() {
     clearTimeout(PENDING);
     if (G.mode === 'online' && G.matchId && !G.over) SEND({ t: 'gomoku.leave' });
+    if (G.matchId) WB.Chat.leaveRoom();       // 离开这一局 → 关掉对局聊天频道
     G.mode = null; G.matchId = null; G.over = false;
     resetPreview();
     hideOverlay();
@@ -422,6 +423,8 @@
       G.matchId = m.matchId;
       G.moves = [];
       hideOverlay();
+      // 对局一开始就开好聊天频道：这一局里两个人可以边下边聊
+      if (G.matchId) WB.Chat.enterRoom({ game: 'gomoku', code: G.matchId, title: '五子棋 · 对局聊天' });
     }
     G.board = m.board.slice();
     G.myColor = m.you;
@@ -479,6 +482,7 @@
     var opp = G.players ? (G.myColor === 1 ? G.players[2] : G.players[1]) : null;
     if (!opp || !opp.code) { toMenu(); return; }
     SEND({ t: 'gomoku.invite', code: opp.code });
+    if (G.matchId) WB.Chat.leaveRoom();        // 上一局的聊天频道先关掉
     G.mode = 'online';
     G.matchId = null;
     G.over = false;
@@ -643,6 +647,8 @@
 
     /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
     WB.Friends.boot(NET);
+    /* ---------- 聊天控件（左下角，平台层通用）：对局聊天走频道 ---------- */
+    WB.Chat.boot(NET);
     // 向好友系统登记「组队邀请」能力：好友点接受后直接开局，不用报邀请码
     WB.Friends.registerGame({
       name: 'gomoku',

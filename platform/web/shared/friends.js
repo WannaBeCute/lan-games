@@ -20,6 +20,7 @@ window.WB = window.WB || {};
   function esc(s) { return util.esc(s); }
 
   var LS_UNREAD = 'wb.friends.unread.v1';   // 各好友的未读数（本机浏览器）
+  var SS_OPEN = 'wb.friends.openchats.v1';  // 还开着的私聊小窗（跨页面保留；手动刷新网页才清掉）
   var POP_TTL = 60000;                      // 左下角弹窗 60 秒自动消失
   var MAX_POPUPS = 3;                       // 同时最多堆 3 个弹窗，再多挤掉最旧的
 
@@ -28,6 +29,20 @@ window.WB = window.WB || {};
   }
   function saveUnread(u) {
     try { localStorage.setItem(LS_UNREAD, JSON.stringify(u)); } catch (e) { /* noop */ }
+  }
+  /** 这次加载是「点链接换页面」还是「手动刷新」——换页面要接着开着的小窗，刷新则重新开始 */
+  function isManualReload() {
+    try {
+      var list = performance.getEntriesByType ? performance.getEntriesByType('navigation') : [];
+      var n = list && list[0];
+      return !!(n && n.type === 'reload');
+    } catch (e) { return false; }
+  }
+  function loadOpenChats() {
+    try { return JSON.parse(sessionStorage.getItem(SS_OPEN) || '[]') || []; } catch (e) { return []; }
+  }
+  function saveOpenChats(list) {
+    try { sessionStorage.setItem(SS_OPEN, JSON.stringify(list)); } catch (e) { /* noop */ }
   }
 
   /* ================= 游戏注册表 =================
@@ -73,8 +88,38 @@ window.WB = window.WB || {};
     this.pops = [];        // 活跃弹窗
     this.panelOpen = false;
     this.tab = 'online';
+    // 跨页面保留私聊小窗：点链接换页面时把刚才开着的小窗重新打开；
+    // 手动刷新网页（F5 / Ctrl+R）则清空，回到干净状态。
+    this._pendingRestore = isManualReload() ? [] : loadOpenChats();
+    if (isManualReload()) saveOpenChats([]);
     this._bindNet();
   }
+
+  /** 记一下现在开着哪些私聊小窗（供换页面后恢复） */
+  FriendApp.prototype._rememberOpen = function () {
+    saveOpenChats(Object.keys(this.chatWins));
+  };
+
+  /** 好友列表/未读有变化时，让左下角的聊天控件跟着刷新 */
+  FriendApp.prototype._notifyChat = function () {
+    if (WB.chat && WB.chat.refreshFromFriends) WB.chat.refreshFromFriends();
+  };
+
+  /**
+   * 把「上一个页面还开着的私聊小窗」重新打开。
+   * 只在拿到最新好友数据之后做一次，所以标题/在线状态都是准的；
+   * 换页面（点链接）才恢复，手动刷新网页时列表已被清空，不会自己弹出来。
+   */
+  FriendApp.prototype._restoreOpenChats = function () {
+    var list = this._pendingRestore || [];
+    if (!list.length) return;
+    this._pendingRestore = [];
+    var self = this;
+    list.forEach(function (ip) {
+      if (!ip || self.chatWins[ip]) return;
+      self.openChat(ip, true);      // silent：恢复时不再重新拉一遍历史（openChat 内部会拉）
+    });
+  };
 
   FriendApp.prototype.isFriend = function (ip) {
     return this.friends.some(function (f) { return f.ip === ip; });
@@ -98,6 +143,9 @@ window.WB = window.WB || {};
       self.requests = m.requests || [];
       if (self.panelOpen) self.renderBody();
       self.renderBadge();
+      // 换页面后把刚才开着的私聊小窗按最新的好友数据重建（标题、在线状态都是新的）
+      self._restoreOpenChats();
+      self._notifyChat();
     });
 
     net.on('friends.invited', function (m) { self._onInvited(m); });
@@ -542,6 +590,7 @@ window.WB = window.WB || {};
     var w = this.chatWins[m.ip];
     if (w) w.setStatus(!!m.online);
     if (this.panelOpen) this.renderBody();
+    this._notifyChat();
   };
 
   /* ---------------- 聊天 ---------------- */
@@ -595,6 +644,7 @@ window.WB = window.WB || {};
       close: function () {
         delete self.chatWins[ip];
         if (root.parentNode) root.parentNode.removeChild(root);
+        self._rememberOpen();          // 关掉了就别再跨页面恢复了
       },
       setStatus: function (on) {
         dot.classList.toggle('on', !!on);
@@ -628,6 +678,8 @@ window.WB = window.WB || {};
 
     this.chatWins[ip] = win;
     this._markRead(ip);
+    this._rememberOpen();
+    this._notifyChat();
 
     var hist = this.histories[ip];
     this.rendered[ip] = {};               // 重开窗口 / 重拉历史时重置去重表，否则旧消息会被跳过
@@ -664,6 +716,7 @@ window.WB = window.WB || {};
     var ip = m.from;
     if (!this.histories[ip]) this.histories[ip] = [];
     this.histories[ip].push({ from: m.from, name: m.name, text: m.text, ts: m.ts, mid: m.mid });
+    this._notifyChat();
     var win = this.chatWins[ip];
     if (win) {
       this._bubble(win, m);          // 窗口开着：直接显示（含自己的回显）
@@ -711,6 +764,7 @@ window.WB = window.WB || {};
   };
 
   FriendApp.prototype._markRead = function (ip) {
+    this._notifyChat();
     if (!this.unread[ip]) return;
     this.unread[ip] = 0;
     saveUnread(this.unread);

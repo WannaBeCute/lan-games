@@ -1770,8 +1770,20 @@
     return lv;
   }
 
+  /** 平台通用：好友 + 左下角聊天控件（编辑器页面也常驻，方便边做关边聊） */
+  function bootPlatformChat() {
+    if (!WB.Net || !WB.Chat) return;
+    try {
+      var net = new WB.Net();
+      if (WB.Friends) WB.Friends.boot(net);
+      WB.Chat.boot(net);
+      net.connect();
+    } catch (e) { /* 编辑器本身不依赖网络，连不上也不影响做关卡 */ }
+  }
+
   function boot() {
     bind();
+    bootPlatformChat();
     syncToolButtons();
     // 默认给一个示例关卡，省得用户先点"重建"才能看到东西
     E.level = blankLevel(20, 15);

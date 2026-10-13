@@ -483,6 +483,8 @@
 
     /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
     WB.Friends.boot(S.net);
+    /* ---------- 聊天控件（左下角，平台层通用）：房间聊天走频道 ---------- */
+    WB.Chat.boot(S.net);
     WB.Friends.registerGame({
       name: 'dodge',
       label: '方块躲避',
@@ -507,10 +509,12 @@
     S.net.on('dodge.created', function (m) {
       WB.audio.play('click');
       WB.ui.toast('房间已创建：' + m.code, 'ok');
+      WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
       show('scr-lobby');
     });
     S.net.on('dodge.joined', function (m) {
       WB.ui.toast('已加入房间：' + m.code, 'ok');
+      WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
       show('scr-lobby');
     });
     S.net.on('dodge.you', function (m) {
@@ -522,6 +526,8 @@
       S.online.room = m;
       S.online.code = m.code;
       S.online.members = m.members;
+      // 刷新页面后回到同一房间：把聊天频道也接回来（房间在，聊天区就在）
+      if (m.code) WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
       if (S.screen === 'scr-lobby' || m.state === 'lobby') renderLobby(m);
       else if (S.screen === 'scr-game') { /* 对局中收到大厅状态，忽略 */ }
       else renderLobby(m);
@@ -991,6 +997,7 @@
     $('btnLeaveRoom').onclick = function () {
       WB.audio.play('click');
       S.net.send({ t: 'dodge.leave' });
+      WB.Chat.leaveRoom();          // 退出房间 → 关掉本局聊天频道
       S.world = null;
       S.online = null;
       show('scr-menu');
