@@ -4,6 +4,8 @@
  *
  * A. 内核：坐标换算、矩形-圆碰撞（「缝隙判定」的两条关键用例）、墙体阻挡与贴墙滑动、
  *          复活点 / 终点 / 死亡复活、圆形障碍的往返与循环巡逻
+ * A2. 设施区域：相邻格子自动连成一整块；出生/复活取区域中心；走进终点区域任意一格算到达
+ * A3. 圆周旋转：绕圆心转圈（v = ωr）、顺/逆时针、速度上限 1000、半径夹取
  * B. 关卡：规格化与校验规则；10 个内置关卡逐关做「时间展开可达性」证明（真的能通关），
  *          并用反例确认求解器不是永远说"能过"
  * C. 联机：建房 / 加入 / 准备 / 选关 / 开始 / 快照 / 死亡 / 到达 / 接应传送 / 通关 / 回收
@@ -45,14 +47,14 @@ function runPlayer(level, seconds, inputFn, opts) {
   const world = DC.createWorld(DC.normalizeLevel(level));
   const player = DC.createPlayer(world, 0);
   const dt = 1 / 60;
-  const events = { died: 0, arrived: false, checkpoints: 0, respawns: 0 };
+  const events = { died: 0, arrived: false, checkpoints: 0, respawns: 0, respawnAt: null };
   for (let t = 0; t < seconds; t += dt) {
     DC.stepObstacles(world, dt);
     const ev = DC.stepPlayer(world, player, (inputFn ? inputFn(player, world) : (opts && opts.input)) || {}, dt);
     if (ev.died) events.died++;
     if (ev.arrived) { events.arrived = true; break; }
     if (ev.checkpoint) events.checkpoints++;
-    if (ev.respawned) events.respawns++;
+    if (ev.respawned) { events.respawns++; events.respawnAt = { x: player.x, y: player.y }; }
   }
   return { world, player, events };
 }
@@ -131,8 +133,9 @@ function coreTests() {
   ok('走过复活点会记住它', rc.player.cp && rc.player.cp.col === 9, JSON.stringify(rc.player.cp));
   ok('撞到障碍会死亡并计数', rc.player.deaths > 0, '死亡 ' + rc.player.deaths + ' 次');
   ok('死亡后回到最近的复活点（不是出生点）',
-    rc.player.deaths > 0 && Math.abs(rc.player.x - 380) < 1 && Math.abs(rc.player.y - 300) < 1,
-    'x=' + rc.player.x.toFixed(1) + ' y=' + rc.player.y.toFixed(1));
+    rc.player.deaths > 0 && !!rc.events.respawnAt &&
+    Math.abs(rc.events.respawnAt.x - 380) < 0.01 && Math.abs(rc.events.respawnAt.y - 300) < 0.01,
+    rc.events.respawnAt ? ('复活于 ' + rc.events.respawnAt.x.toFixed(1) + ',' + rc.events.respawnAt.y.toFixed(1)) : '没有复活事件');
 
   /* 终点判定 */
   const goalLevel = levelWith({ obstacles: [] });
@@ -199,6 +202,104 @@ function coreTests() {
     ps[0].state === 'playing' && ps[0].cp === null && ps[1].state === 'playing' &&
     Math.abs(ps[0].y - DC.gridCenter(1, 4).y) < 0.01 && mpWorld.time === 0,
     '玩家1 y=' + ps[0].y);
+
+  /* ================================================================
+   * A2. 设施区域（出生点 / 复活点 / 终点是一整片区域，不再是单格）
+   * ================================================================ */
+  const areaLevel = DC.normalizeLevel(levelWith({
+    spawns: [{ col: 1, row: 6 }, { col: 2, row: 6 }, { col: 1, row: 7 }, { col: 2, row: 7 }],
+    checkpoints: [{ col: 8, row: 6 }, { col: 9, row: 6 }, { col: 8, row: 7 }, { col: 9, row: 7 }],
+    goals: [{ col: 18, row: 6 }, { col: 18, row: 7 }],
+    obstacles: []
+  }));
+  ok('相邻的同属性格子被认成一整块区域',
+    areaLevel.spawnRegions.length === 1 && areaLevel.spawnRegions[0].size === 4 &&
+    areaLevel.spawnRegions[0].width === 2 && areaLevel.spawnRegions[0].height === 2,
+    JSON.stringify(areaLevel.spawnRegions.map(function (r) { return [r.size, r.width, r.height]; })));
+  ok('互不相连的同属性格子算两块区域',
+    DC.regions([{ col: 1, row: 1 }, { col: 1, row: 2 }, { col: 5, row: 5 }]).length === 2);
+  ok('区域外轮廓只画外侧的边（2×2 恰好 8 段，内部不画线）',
+    DC.regionOutline(areaLevel.spawns).length === 8, DC.regionOutline(areaLevel.spawns).length + ' 段');
+  ok('出生位置就是整块区域的正中心',
+    areaLevel.spawnRegions[0].x === 80 && areaLevel.spawnRegions[0].y === 280,
+    '(' + areaLevel.spawnRegions[0].x + ',' + areaLevel.spawnRegions[0].y + ')');
+  const areaWorld = DC.createWorld(areaLevel);
+  const pa = DC.createPlayer(areaWorld, 0);
+  ok('玩家出生在区域中心（不是某个格子的中心）', pa.x === 80 && pa.y === 280, '(' + pa.x + ',' + pa.y + ')');
+  ok('求解器认得出成片的出生点与终点区域',
+    DC.solveReachable(areaLevel, 30).ok === true, JSON.stringify(DC.solveReachable(areaLevel, 30)));
+
+  // 复活点也是区域：踩到区域里任意一格就激活，死后回到这块区域的正中心
+  const cpArea = DC.normalizeLevel(levelWith({
+    spawns: [{ col: 1, row: 7 }],
+    checkpoints: [{ col: 4, row: 6 }, { col: 5, row: 6 }, { col: 4, row: 7 }, { col: 5, row: 7 }],
+    goals: [{ col: 18, row: 7 }],
+    obstacles: [{ id: 'killer', path: [{ col: 12, row: 7 }], speed: 100, loopMode: 'pingpong', radius: 18 }]
+  }));
+  const rca = runPlayer(cpArea, 14, null, { input: { right: true } });
+  ok('复活点区域：走到区域里任意一格就算激活',
+    !!rca.player.cp && rca.player.cp.col >= 4 && rca.player.cp.col <= 5, JSON.stringify(rca.player.cp));
+  ok('死后回到复活区域的正中心',
+    rca.player.deaths > 0 && rca.events.respawnAt &&
+    Math.abs(rca.events.respawnAt.x - 200) < 0.01 && Math.abs(rca.events.respawnAt.y - 280) < 0.01,
+    rca.events.respawnAt ? ('复活于 ' + rca.events.respawnAt.x.toFixed(1) + ',' + rca.events.respawnAt.y.toFixed(1)) : '没有复活事件');
+
+  // 终点也是区域：走进任意一格都算到达
+  const goalArea = DC.normalizeLevel(levelWith({
+    goals: [{ col: 17, row: 6 }, { col: 18, row: 6 }, { col: 17, row: 7 }, { col: 18, row: 7 }], obstacles: []
+  }));
+  ok('终点区域：走进区域里任意一格都算到达',
+    runPlayer(goalArea, 12, null, { input: { right: true } }).events.arrived === true);
+
+  const sealedArea = DC.normalizeLevel(levelWith({
+    goals: [{ col: 17, row: 6 }, { col: 18, row: 6 }, { col: 17, row: 7 }, { col: 18, row: 7 }],
+    walls: DC.createLevel(20, 15).walls.concat([
+      { col: 16, row: 6 }, { col: 16, row: 7 }, { col: 17, row: 5 }, { col: 18, row: 5 },
+      { col: 17, row: 8 }, { col: 18, row: 8 }
+    ]),
+    obstacles: []
+  }));
+  ok('终点区域被墙彻底封住 → 判过不去', DC.solveReachable(sealedArea, 30).ok === false);
+  ok('连墙体连通性也会说"走不到"', DC.reachable(sealedArea) === false);
+
+  /* ================================================================
+   * A3. 圆形障碍的圆周旋转（绕圆心转圈，半径自定）
+   * ================================================================ */
+  const orbitCenter = DC.gridCenter(10, 7);
+  const orbitWorld = DC.createWorld(DC.normalizeLevel(levelWith({
+    obstacles: [{ id: 'orbit', path: [{ col: 10, row: 7 }], speed: 200, radius: 18, orbit: { radius: 100, cw: true } }]
+  })));
+  const oo = orbitWorld.obstacles[0];
+  ok('圆周障碍不是"不动的障碍"（单点路径也照样动）', oo.static === false);
+  ok('圆周障碍从圆心正右方 100px 处出发',
+    Math.abs(oo.x - (orbitCenter.x + 100)) < 0.01 && Math.abs(oo.y - orbitCenter.y) < 0.01,
+    '(' + oo.x.toFixed(1) + ',' + oo.y.toFixed(1) + ')');
+  for (let i = 0; i < 60; i++) DC.stepObstacles(orbitWorld, 1 / 60);
+  ok('按 v = ωr 转圈：200px/s ÷ 半径 100 → 1 秒正好转 2 弧度',
+    Math.abs(oo.angle - 2) < 0.05, '角=' + oo.angle.toFixed(3));
+  ok('转圈时始终不离圆心 100px',
+    Math.abs(Math.hypot(oo.x - orbitCenter.x, oo.y - orbitCenter.y) - 100) < 0.5);
+
+  const ccwWorld = DC.createWorld(DC.normalizeLevel(levelWith({
+    obstacles: [{ id: 'ccw', path: [{ col: 10, row: 7 }], speed: 200, radius: 18, orbit: { radius: 100, cw: false } }]
+  })));
+  for (let i = 0; i < 60; i++) DC.stepObstacles(ccwWorld, 1 / 60);
+  const ccwAngle = ccwWorld.obstacles[0].angle;
+  ok('逆时针就是反着转', Math.abs(ccwAngle - (Math.PI * 2 - 2)) < 0.05, '角=' + ccwAngle.toFixed(3));
+
+  ok('速度上限提到 1000px/s（老的 400 上限已经放开）',
+    DC.normalizeLevel(levelWith({
+      obstacles: [{ id: 'fast', path: [{ col: 2, row: 2 }], speed: 9999, radius: 18 }]
+    })).obstacles[0].speed === 1000,
+    '常量上限 = ' + DC.SPEED_MAX);
+  ok('速度过小也会被夹住', DC.normalizeLevel(levelWith({
+    obstacles: [{ id: 'slow', path: [{ col: 2, row: 2 }], speed: 1, radius: 18 }]
+  })).obstacles[0].speed === DC.SPEED_MIN);
+  ok('旋转半径会被夹到合法范围',
+    DC.normalizeLevel(levelWith({
+      obstacles: [{ id: 'big', path: [{ col: 2, row: 2 }], speed: 100, radius: 18, orbit: { radius: 100000 } }]
+    })).obstacles[0].orbit.radius === DC.ORBIT_MAX,
+    'ORBIT_MAX = ' + DC.ORBIT_MAX);
 }
 
 /* ================================================================
@@ -210,7 +311,12 @@ function validateTests() {
   ok('没有出生点 → 报错且不能保存', noSpawn.ok === false && /出生点/.test(noSpawn.errors.join('')), noSpawn.errors.join('；'));
 
   const noCp = DC.validateLevel(levelWith({ checkpoints: [] }));
-  ok('没有复活点 → 报错', noCp.ok === false && /复活点/.test(noCp.errors.join('')), noCp.errors.join('；'));
+  ok('没有复活点也能保存（只给警告：死了回出生点）',
+    noCp.ok === true && /复活点/.test(noCp.warnings.join('')), noCp.warnings.join('；') || '（没警告）');
+
+  const noGoal = DC.validateLevel(levelWith({ goals: [] }));
+  ok('没有终点 → 报错且不能保存',
+    noGoal.ok === false && /终点/.test(noGoal.errors.join('')), noGoal.errors.join('；'));
 
   const onWall = levelWith({});
   onWall.walls = onWall.walls.concat([{ col: 3, row: 7 }]);
@@ -222,8 +328,30 @@ function validateTests() {
     obstacles: [{ id: 'x', path: [{ col: 1, row: 7 }], speed: 100, loopMode: 'pingpong', radius: 18 }]
   });
   const vOb = DC.validateLevel(obOnSpawn);
-  ok('障碍压在出生点上 → 警告（不拦保存）',
-    vOb.ok === true && /开局即死/.test(vOb.warnings.join('')), vOb.warnings.join('；'));
+  ok('障碍轨迹压在出生点上 → 警告（安全区兜底，不拦保存）',
+    vOb.ok === true && /不会被撞死/.test(vOb.warnings.join('')), vOb.warnings.join('；'));
+
+  // 底层保障：玩家站在出生/复活/终点安全区内（含边界线）永不因障碍死亡
+  const safeLv = DC.normalizeLevel({
+    cols: 10, rows: 7, spawns: [{ col: 2, row: 3 }], goals: [{ col: 8, row: 3 }],
+    walls: DC.createLevel(10, 7).walls,
+    obstacles: [{ id: 's1', path: [{ col: 2, row: 3 }, { col: 3, row: 3 }], speed: 100, loopMode: 'pingpong', radius: 18 }]
+  });
+  const safeWorld = DC.createWorld(safeLv);
+  const safeP = DC.createPlayer(safeWorld, 0);
+  DC.stepObstacles(safeWorld, 1 / 60);
+  let safeDied = false;
+  for (let t = 0; t < 300; t++) {
+    DC.stepObstacles(safeWorld, 1 / 60);
+    if (DC.stepPlayer(safeWorld, safeP, {}, 1 / 60).died) { safeDied = true; break; }
+  }
+  ok('玩家站在出生区内（障碍路径正好经过）→ 不死', safeDied === false,
+    'deaths=' + safeP.deaths);
+  ok('inSafeZone：站区内 true，离开一步 false',
+    DC.inSafeZone(safeLv, DC.gridCenter(2, 3).x, DC.gridCenter(2, 3).y) === true &&
+    DC.inSafeZone(safeLv, DC.gridCenter(4, 3).x, DC.gridCenter(4, 3).y) === false);
+  ok('求解器与游戏同一套安全区（出生点被障碍压着也能通关）',
+    DC.solveReachable(safeLv, 20).ok === true);
 
   const norm = DC.normalizeLevel({ cols: 8, rows: 6, spawns: [{ col: 1, row: 1 }], walls: [{ col: 1, row: 1 }, { col: 99, row: 99 }] });
   ok('规格化会剔除越界格', norm.walls.length === 1, '墙 ' + norm.walls.length + ' 个');

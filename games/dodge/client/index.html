@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/dodge/dodge.css">
 <link rel="stylesheet" href="/shared/friends.css">
 </head>
-<body>
+<body class="theme-dodge">
 
 <div class="topbar">
   <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 方块躲避</span></div>
@@ -179,8 +179,9 @@
           <h3>这一关</h3>
           <div class="hintbox" id="levelHint"></div>
           <div class="hintbox dim" id="ruleTip">
-            · 碰到圆形障碍 → 回到最近的复活点<br>
-            · 走到绿色终点格 → 到达<br>
+            · 绿色是<b>出生点</b>和<b>终点</b>区域，黄色是<b>复活点</b>区域<br>
+            · 碰到圆形障碍 → 回到最近的复活点（没踩过复活点就回出生点）<br>
+            · 走进绿色终点区域的<b>任意一格</b>都算到达<br>
             · <b>全员到达</b>才算通关<br>
             · 已到达的队友按接应键，可把还在跑的队友直接送到终点（冷却 3 秒）
           </div>

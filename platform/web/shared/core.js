@@ -71,20 +71,60 @@ window.WB = window.WB || {};
 
   /* ================= 设置 ================= */
   var STORE_KEY = 'wb.games.settings.v1';
-  var ACTIONS = [
-    { k: 'up', label: '前进' }, { k: 'down', label: '后退' },
-    { k: 'left', label: '左转' }, { k: 'right', label: '右转' },
-    { k: 'fire', label: '开火' }
+
+  /**
+   * 每种游戏一套键位。设置弹窗里的「游戏预选列表」就按这份定义渲染，
+   * 游戏侧用 WB.settings.keysFor(gameId, 玩家序号) 取自己的键位。
+   * 注意：tank 的键位仍同步存在 settings.keys（p1/p2）—— 老代码/旧存档都认它。
+   */
+  var GAMES = [
+    {
+      id: 'tank', name: '坦克大战',
+      players: [ { id: 'p1', label: '玩家 1' }, { id: 'p2', label: '玩家 2（本地双人）' } ],
+      actions: [
+        { k: 'up', label: '前进' }, { k: 'down', label: '后退' },
+        { k: 'left', label: '左转' }, { k: 'right', label: '右转' },
+        { k: 'fire', label: '开火' }
+      ],
+      hint: '点击按键框后按下新键即可修改（Esc 取消）。坦克可 360° 旋转：<b>↑前进　↓后退　←左转　→右转</b>，开火只有一个键。玩家 1 默认使用方向键，玩家 2 默认使用 W/A/S/D。',
+      defaults: {
+        p1: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', fire: 'Space' },
+        p2: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', fire: 'KeyF' }
+      }
+    },
+    {
+      id: 'gomoku', name: '五子棋',
+      none: true,
+      hint: '五子棋只用鼠标点格子下棋，没有键位可以设置。'
+    },
+    {
+      id: 'dodge', name: '方块躲避',
+      players: [
+        { id: 'p1', label: '玩家 1' }, { id: 'p2', label: '玩家 2' },
+        { id: 'p3', label: '玩家 3' }, { id: 'p4', label: '玩家 4' }
+      ],
+      actions: [
+        { k: 'up', label: '上' }, { k: 'down', label: '下' },
+        { k: 'left', label: '左' }, { k: 'right', label: '右' },
+        { k: 'rescue', label: '接应' }
+      ],
+      hint: '移动用 上 / 下 / 左 / 右；自己到达终点后按「接应」把还在跑的队友直接送到终点。玩家 1 默认方向键 + 空格接应，玩家 2~4 各有一套（本地多人时用）。',
+      defaults: {
+        p1: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', rescue: 'Space' },
+        p2: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', rescue: 'KeyF' },
+        p3: { up: 'KeyI', down: 'KeyK', left: 'KeyJ', right: 'KeyL', rescue: 'KeyU' },
+        p4: { up: 'Numpad8', down: 'Numpad5', left: 'Numpad4', right: 'Numpad6', rescue: 'Numpad0' }
+      }
+    }
   ];
+
   var DEFAULTS = {
     sfxVolume: 0.7,
     muted: false,
     name: '',
     rounds: 20,
-    keys: {
-      p1: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', fire: 'Space' },
-      p2: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', fire: 'KeyF' }
-    }
+    keys: clone(GAMES[0].defaults),
+    keymaps: { tank: clone(GAMES[0].defaults), dodge: clone(GAMES[2].defaults) }
   };
 
   function deepMerge(target, src) {
@@ -105,13 +145,33 @@ window.WB = window.WB || {};
   var settings = clone(DEFAULTS);
   try {
     var raw = localStorage.getItem(STORE_KEY);
-    if (raw) deepMerge(settings, JSON.parse(raw));
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      deepMerge(settings, parsed);
+      // 老存档只有 tank 的 keys（没有 keymaps）：把玩家已改过的坦克键位搬进 keymaps
+      if (!parsed.keymaps && parsed.keys) settings.keymaps.tank = clone(settings.keys);
+    }
   } catch (e) { /* 忽略损坏的本地数据 */ }
+  // tank 侧继续用 settings.keys（同一份引用，双向同步）
+  settings.keys = settings.keymaps.tank;
 
   var settingsApi = WB.settings = {
-    ACTIONS: ACTIONS,
+    GAMES: GAMES,
+    ACTIONS: GAMES[0].actions,          // 兼容老代码：坦克的动作表
     DEFAULTS: DEFAULTS,
     get() { return settings; },
+    gameById(id) {
+      for (var i = 0; i < GAMES.length; i++) if (GAMES[i].id === id) return GAMES[i];
+      return null;
+    },
+    /** 某游戏某玩家（序号从 0 开始）的键位；游戏没定义键位（如五子棋）返回 null */
+    keysFor(gameId, playerIndex) {
+      var game = settingsApi.gameById(gameId);
+      if (!game || game.none) return null;
+      var pid = game.players[playerIndex % game.players.length].id;
+      var map = settings.keymaps[gameId] || {};
+      return deepMerge(clone(game.defaults[pid] || {}), map[pid] || {});
+    },
     save() {
       try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) { /* noop */ }
       WB.audio.setVolume(settings.sfxVolume, settings.muted);
@@ -119,12 +179,17 @@ window.WB = window.WB || {};
     },
     reset() {
       settings = deepMerge(clone(DEFAULTS), { name: settings.name });
+      settings.keys = settings.keymaps.tank;
       settingsApi.save();
       return settings;
     },
-    /** 该键位是否与同一玩家的其它动作冲突 */
-    conflict(player, action, code) {
-      var set = settings.keys[player];
+    /** 该键位是否与同一玩家的其它动作冲突。兼容两种签名：
+     *  conflict(gameId, playerId, action, code) 或老签名 conflict(playerId, action, code)（坦克） */
+    conflict(a, b, c, d) {
+      var gameId, player, action, code;
+      if (d !== undefined) { gameId = a; player = b; action = c; code = d; }
+      else { gameId = 'tank'; player = a; action = b; code = c; }
+      var set = (settings.keymaps[gameId] || {})[player];
       for (var k in set) if (k !== action && set[k] === code) return k;
       return null;
     }
@@ -265,12 +330,9 @@ window.WB = window.WB || {};
             '<button class="btn tiny ghost" id="wb-test">试听音效</button>' +
           '</div>' +
         '</div>' +
-        '<div class="wb-sec"><h4>键位设置 · 坦克大战</h4>' +
-          '<p class="wb-hint">点击按键框后按下新键即可修改（Esc 取消）。坦克可 360° 旋转：<b>↑前进　↓后退　←左转　→右转</b>，开火只有一个键。玩家 1 默认使用方向键，玩家 2 默认使用 W/A/S/D。</p>' +
-          '<div class="wb-keys">' +
-            keyCol('p1', '玩家 1') +
-            keyCol('p2', '玩家 2（本地双人）') +
-          '</div>' +
+        '<div class="wb-sec"><h4>键位设置</h4>' +
+          '<div class="wb-gamepick" id="wb-gamepick"></div>' +
+          '<div id="wb-keyarea"></div>' +
         '</div>' +
       '</div>' +
       '<div class="wb-dialog-foot">' +
@@ -281,15 +343,89 @@ window.WB = window.WB || {};
     mask.appendChild(panel);
     document.body.appendChild(mask);
 
-    function keyCol(player, title) {
-      var html = '<div class="wb-keycol"><div class="wb-keycol-title">' + title + '</div>';
-      ACTIONS.forEach(function (a) {
-        html += '<div class="wb-keyrow"><span>' + a.label + '</span>' +
-          '<button class="wb-key" data-player="' + player + '" data-action="' + a.k + '">' +
-          util.esc(keys.name(s.keys[player][a.k])) + '</button></div>';
+    /* ---- 键位：按游戏切换（坦克大战 / 五子棋 / 方块躲避） ---- */
+    var curGame = 'tank';
+
+    function renderGamePick() {
+      var box = panel.querySelector('#wb-gamepick');
+      box.innerHTML = '';
+      GAMES.forEach(function (g) {
+        var chip = util.el('button', 'wb-gamechip' + (g.id === curGame ? ' on' : '') + (g.none ? ' none' : ''));
+        chip.type = 'button';
+        chip.textContent = g.name;
+        chip.title = g.none ? '这个游戏没有键位设置' : '';
+        chip.onclick = function () {
+          if (curGame === g.id) return;
+          curGame = g.id;
+          audio.play('click');
+          renderGamePick();
+          renderKeyArea();
+        };
+        box.appendChild(chip);
       });
-      return html + '</div>';
     }
+
+    function renderKeyArea() {
+      var game = settingsApi.gameById(curGame);
+      var area = panel.querySelector('#wb-keyarea');
+      area.innerHTML = '';
+      var hint = util.el('p', 'wb-hint');
+      hint.innerHTML = game.hint;
+      area.appendChild(hint);
+      if (game.none) return;      // 五子棋：只用鼠标，没有键位
+      if (!settings.keymaps[game.id]) settings.keymaps[game.id] = clone(game.defaults);
+      var wrap = util.el('div', 'wb-keys');
+      game.players.forEach(function (pl) {
+        var col = util.el('div', 'wb-keycol');
+        var title = util.el('div', 'wb-keycol-title', pl.label);
+        col.appendChild(title);
+        game.actions.forEach(function (a) {
+          var map = settings.keymaps[game.id][pl.id] || {};
+          var cur = map[a.k] || game.defaults[pl.id][a.k];
+          col.innerHTML += '<div class="wb-keyrow"><span>' + a.label + '</span>' +
+            '<button type="button" class="wb-key" data-game="' + game.id + '" data-player="' + pl.id + '" data-action="' + a.k + '">' +
+            util.esc(keys.name(cur)) + '</button></div>';
+        });
+        wrap.appendChild(col);
+      });
+      area.appendChild(wrap);
+      bindKeyButtons(wrap);
+    }
+
+    function bindKeyButtons(root) {
+      util.$$('.wb-key', root).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (btn.classList.contains('capturing')) return;
+          var old = btn.textContent;
+          btn.classList.add('capturing');
+          btn.textContent = '按新键…';
+          audio.play('click');
+          keys.capture(function (code) {
+            btn.classList.remove('capturing');
+            if (!code) { btn.textContent = old; return; }
+            var game = btn.dataset.game, player = btn.dataset.player, action = btn.dataset.action;
+            var conflict = settingsApi.conflict(game, player, action, code);
+            if (conflict) {
+              var gameDef = settingsApi.gameById(game);
+              var label = '其它动作';
+              gameDef.actions.forEach(function (x) { if (x.k === conflict) label = x.label; });
+              ui.toast('该键已被「' + label + '」占用', 'err');
+              audio.play('error');
+              btn.textContent = old;
+              return;
+            }
+            if (!settings.keymaps[game]) settings.keymaps[game] = {};
+            if (!settings.keymaps[game][player]) settings.keymaps[game][player] = {};
+            settings.keymaps[game][player][action] = code;
+            btn.textContent = keys.name(code);
+            audio.play('click');
+          });
+        });
+      });
+    }
+
+    renderGamePick();
+    renderKeyArea();
 
     function close() { mask.remove(); document.removeEventListener('keydown', onEsc, true); }
     function onEsc(e) { if (e.key === 'Escape') close(); }
@@ -310,32 +446,6 @@ window.WB = window.WB || {};
     });
     panel.querySelector('#wb-test').addEventListener('click', function () { audio.play('shoot'); setTimeout(function () { audio.play('pickup'); }, 120); });
 
-    // 键位捕获
-    util.$$('.wb-key', panel).forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        if (btn.classList.contains('capturing')) return;
-        var old = btn.textContent;
-        btn.classList.add('capturing');
-        btn.textContent = '按新键…';
-        audio.play('click');
-        keys.capture(function (code) {
-          btn.classList.remove('capturing');
-          if (!code) { btn.textContent = old; return; }
-          var player = btn.dataset.player, action = btn.dataset.action;
-          var conflict = settingsApi.conflict(player, action, code);
-          if (conflict) {
-            ui.toast('该键已被「' + (ACTIONS.filter(function (x) { return x.k === conflict; })[0] || {}).label + '」占用', 'err');
-            audio.play('error');
-            btn.textContent = old;
-            return;
-          }
-          s.keys[player][action] = code;
-          btn.textContent = keys.name(code);
-          audio.play('click');
-        });
-      });
-    });
-
     panel.querySelector('#wb-reset').addEventListener('click', function () {
       var name = panel.querySelector('#wb-name').value;
       settingsApi.reset();
@@ -344,9 +454,7 @@ window.WB = window.WB || {};
       panel.querySelector('#wb-mute').checked = s.muted;
       panel.querySelector('#wb-name').value = name;
       settings.name = name;
-      util.$$('.wb-key', panel).forEach(function (btn) {
-        btn.textContent = keys.name(s.keys[btn.dataset.player][btn.dataset.action]);
-      });
+      renderKeyArea();      // 键位整体回到默认，按当前选中的游戏重画
       ui.toast('已恢复默认键位与音量');
     });
 

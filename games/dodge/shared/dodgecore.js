@@ -4,8 +4,14 @@
  *
  * 玩法参考老版《史上最难的游戏》：
  *   · 关卡建在固定网格上（每格 GRID_SIZE=40），玩家是 36×36 的方格，画在格子中心
- *   · 障碍是圆形（半径 18，略小于半格），沿「网格中心点」连成的路径巡逻
+ *   · 障碍是圆形（半径 18，略小于半格），沿「网格中心点」连成的路径巡逻；
+ *     也可以改成「圆周旋转」——绕某个格心画圆转圈，半径自己定
  *   · 玩家自由移动（不是逐格跳），撞到圆形障碍即死亡，回到最近的复活点
+ *
+ * ★ 出生点 / 复活点 / 终点都是「区域」而不是单个格子：
+ *   它们本质是一组格子，四方向相邻的格子会被 groupCells 认成同一处（相邻自动吸附成整体）。
+ *   玩家出生在整块区域的中心，走到终点区域里的任意一格都算到达。
+ *   数据格式仍是格子列表，所以老的关卡 JSON 不用改一个字就能继续跑。
  *
  * ★ 核心难度来源 —— 「缝隙判定」：
  *   玩家是有体积的方格，两个相邻格子的障碍圆心相距 40px，两个圆之间的空隙只有 4px，
@@ -31,6 +37,8 @@
   var ARRIVE_EPS = 0.6;        // 到达路径点的判定容差（像素）
   var MAX_COLS = 60, MAX_ROWS = 45;   // 关卡尺寸上限（编辑器也用它做校验）
   var MIN_COLS = 4, MIN_ROWS = 4;
+  var SPEED_MIN = 10, SPEED_MAX = 1000;   // 圆形障碍速度范围（px/s）——圆周旋转也用它
+  var ORBIT_MIN = 20, ORBIT_MAX = 500;    // 圆周旋转的半径范围（像素）
 
   /** 4 名玩家的颜色（与本地多人、联机房间一致） */
   var PLAYER_COLORS = ['#4c8dff', '#2fd39b', '#f5a524', '#c85dff'];
@@ -83,6 +91,116 @@
     return out;
   }
 
+  /**
+   * 把一堆格子按「四方向相邻」分成若干连通区域。
+   * 出生点 / 复活点 / 终点都是区域：相邻的同属性格子会自然连成「一个整体」，
+   * 编辑器里拖拽画出来的大块区域就是靠这个函数被认成一处的。
+   */
+  function groupCells(cells) {
+    var set = {}, list = [];
+    (cells || []).forEach(function (c) {
+      if (!c) return;
+      var k = cellKey(c.col, c.row);
+      if (set[k]) return;
+      set[k] = 1; list.push({ col: c.col, row: c.row });
+    });
+    var seen = {}, out = [], DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    list.forEach(function (start) {
+      var sk = cellKey(start.col, start.row);
+      if (seen[sk]) return;
+      seen[sk] = 1;
+      var queue = [start], head = 0, group = [];
+      while (head < queue.length) {
+        var cur = queue[head++];
+        group.push(cur);
+        for (var i = 0; i < 4; i++) {
+          var nc = cur.col + DIRS[i][0], nr = cur.row + DIRS[i][1];
+          var nk = cellKey(nc, nr);
+          if (set[nk] && !seen[nk]) { seen[nk] = 1; queue.push({ col: nc, row: nr }); }
+        }
+      }
+      out.push(group);
+    });
+    return out;
+  }
+
+  /** 一个连通区域的包围盒信息（编辑器画框、算出生位置都用它） */
+  function regionInfo(group) {
+    var minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+    group.forEach(function (c) {
+      if (c.col < minCol) minCol = c.col;
+      if (c.col > maxCol) maxCol = c.col;
+      if (c.row < minRow) minRow = c.row;
+      if (c.row > maxRow) maxRow = c.row;
+    });
+    return {
+      cells: group,
+      size: group.length,
+      minCol: minCol, minRow: minRow, maxCol: maxCol, maxRow: maxRow,
+      width: maxCol - minCol + 1, height: maxRow - minRow + 1,
+      // 包围盒中心的像素坐标：整块区域的正中心，玩家站这里
+      x: (minCol + maxCol + 1) * GRID_SIZE / 2,
+      y: (minRow + maxRow + 1) * GRID_SIZE / 2
+    };
+  }
+
+  /** 一组格子 → 区域列表 */
+  function regions(cells) { return groupCells(cells).map(regionInfo); }
+
+  /**
+   * 区域的「落脚点」：优先用包围盒中心；万一中心被墙压住（L 形区域的中心可能落在墙角上），
+   * 就退回到离中心最近的那个格子中心。
+   */
+  function regionAnchor(level, region) {
+    if (!boxBlockedAt(level, region.x, region.y)) return { x: region.x, y: region.y };
+    var best = null, bestD = Infinity;
+    region.cells.forEach(function (c) {
+      var p = gridCenter(c.col, c.row);
+      if (boxBlockedAt(level, p.x, p.y)) return;
+      var d = (p.x - region.x) * (p.x - region.x) + (p.y - region.y) * (p.y - region.y);
+      if (d < bestD) { bestD = d; best = p; }
+    });
+    return best || { x: region.x, y: region.y };
+  }
+
+  /** 区域里离某个点最近的格子（求解器要用它把「落在区域里的点」换成 BFS 起点格） */
+  function nearestCell(region, x, y) {
+    var best = region.cells[0], bestD = Infinity;
+    region.cells.forEach(function (c) {
+      var p = gridCenter(c.col, c.row);
+      var d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bestD) { bestD = d; best = c; }
+    });
+    return best;
+  }
+
+  /** 取某个设施字段的区域列表（带落脚点）。不缓存：设施列表都很小，随取随算最省心 */
+  function facilityRegions(level, field) {
+    return regions(level[field] || []).map(function (r) {
+      r.anchor = regionAnchor(level, r);
+      return r;
+    });
+  }
+
+  /**
+   * 区域外轮廓线段（像素坐标 [x1,y1,x2,y2]）：
+   * 只画「外侧」的边，内部相邻的边不画 —— 于是整块区域看起来是一个完整的整体。
+   * 内核不依赖 canvas，把线段丢给渲染方去画，游戏页和编辑器共用同一套轮廓。
+   */
+  function regionOutline(cells) {
+    var set = {};
+    (cells || []).forEach(function (c) { set[cellKey(c.col, c.row)] = 1; });
+    var segs = [];
+    (cells || []).forEach(function (c) {
+      var x = c.col * GRID_SIZE, y = c.row * GRID_SIZE;
+      if (!set[cellKey(c.col, c.row - 1)]) segs.push([x, y, x + GRID_SIZE, y]);
+      if (!set[cellKey(c.col, c.row + 1)]) segs.push([x, y + GRID_SIZE, x + GRID_SIZE, y + GRID_SIZE]);
+      if (!set[cellKey(c.col - 1, c.row)]) segs.push([x, y, x, y + GRID_SIZE]);
+      if (!set[cellKey(c.col + 1, c.row)]) segs.push([x + GRID_SIZE, y, x + GRID_SIZE, y + GRID_SIZE]);
+    });
+    return segs;
+  }
+
   /** 把外部 JSON 规格化成运行时关卡：补默认值、去重、裁剪非法坐标 */
   function normalizeLevel(raw) {
     raw = raw || {};
@@ -111,16 +229,32 @@
     level.obstacles = (raw.obstacles || []).map(function (o, i) {
       var path = cellList(o && o.path).filter(inB);
       if (!path.length && o && isFinite(o.col) && isFinite(o.row)) path = [{ col: Math.round(o.col), row: Math.round(o.row) }];
-      return {
+      var orbitRadius = Number(o && o.orbit && o.orbit.radius);
+      var item = {
         id: String((o && o.id) || ('obstacle_' + (i + 1))),
         path: path,
-        speed: clamp(Number(o && o.speed) || 100, 10, 400),
+        speed: clamp(Number(o && o.speed) || 100, SPEED_MIN, SPEED_MAX),
         loopMode: (o && o.loopMode === 'loop') ? 'loop' : 'pingpong',
         radius: clamp(Number(o && o.radius) || OBSTACLE_RADIUS, 6, GRID_SIZE / 2 - 2)
       };
+      // 圆周旋转：绕着 path[0] 这一格转圈（半径自己定），和巡逻路径二选一
+      if (isFinite(orbitRadius) && orbitRadius > 0) {
+        item.orbit = {
+          radius: clamp(Math.round(orbitRadius), ORBIT_MIN, ORBIT_MAX),
+          cw: !(o && o.orbit && o.orbit.cw === false),        // 默认顺时针
+          angle: Number(o && o.orbit && o.orbit.angle) || 0   // 起始角度（弧度），0 = 圆心正右方
+        };
+        // 圆心对齐：'cell' = 格子中心（默认），'cross' = 网格十字交点
+        item.centerSnap = (o && o.centerSnap === 'cross') ? 'cross' : 'cell';
+      }
+      return item;
     }).filter(function (o) { return o.path.length > 0; });
 
     if (!level.spawns.length) level.spawns = [{ col: 1, row: Math.floor(level.rows / 2) }];
+    // 预先把三类设施按连通区域算好，渲染与寻路都用它（区域里相邻格子自动算成"一处"）
+    level.spawnRegions = facilityRegions(level, 'spawns');
+    level.checkpointRegions = facilityRegions(level, 'checkpoints');
+    level.goalRegions = facilityRegions(level, 'goals');
     return level;
   }
 
@@ -137,9 +271,14 @@
       errors.push('关卡尺寸必须在 ' + MIN_COLS + '×' + MIN_ROWS + ' ~ ' + MAX_COLS + '×' + MAX_ROWS + ' 之间');
     }
     var spawns = level.spawns || [], checkpoints = level.checkpoints || [], goals = level.goals || [];
+    // 能保存、能玩的最低要求只有两条：有出生点、有终点。
+    // 复活点是可选的 —— 没有复活点就死了回出生点，不该拦着人家保存。
     if (!spawns.length) errors.push('请至少放置 1 个出生点');
-    if (!checkpoints.length) errors.push('请至少放置 1 个复活点');
-    if (!goals.length) warnings.push('还没有终点：这关无法通关（可以先保存，之后再补）');
+    if (!goals.length) errors.push('请至少放置 1 个终点（没有终点没法通关）');
+    if (!checkpoints.length) warnings.push('还没有复活点：被撞后会回到出生点（不拦保存，随时可以再补）');
+    var spawnRegions = groupCells(spawns).length, goalRegions = groupCells(goals).length;
+    if (spawns.length > 1 && spawnRegions > 1) warnings.push('出生点有 ' + spawnRegions + ' 块互不相连的区域（多人时会分散出生）');
+    if (goals.length > 1 && goalRegions > 1) warnings.push('终点有 ' + goalRegions + ' 块互不相连的区域');
 
     var used = {};
     function scan(list, label) {
@@ -163,16 +302,31 @@
       });
     });
 
-    // 出生点/复活点与障碍同格 → 一复活就死
+    // 障碍轨迹与设施重叠只作提醒：内核已保障玩家在安全区（出生/复活/终点）内不会死亡
     (level.obstacles || []).forEach(function (o) {
       (o.path || []).forEach(function (p) {
         spawns.forEach(function (s) {
-          if (s.col === p.col && s.row === p.row) warnings.push('出生点 (' + s.col + ',' + s.row + ') 就在障碍「' + (o.id || '') + '」的巡逻点上，开局即死');
+          if (s.col === p.col && s.row === p.row) warnings.push('出生点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在出生区内不会被撞死，但一离开就可能挨撞，建议避开');
         });
         checkpoints.forEach(function (s) {
-          if (s.col === p.col && s.row === p.row) warnings.push('复活点 (' + s.col + ',' + s.row + ') 就在障碍「' + (o.id || '') + '」的巡逻点上，复活即死');
+          if (s.col === p.col && s.row === p.row) warnings.push('复活点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在复活区内不会被撞死，建议避开');
+        });
+        goals.forEach(function (s) {
+          if (s.col === p.col && s.row === p.row) warnings.push('终点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在终点区内不会被撞死，建议避开');
         });
       });
+    });
+
+    // 路径障碍的「起始点」（path[0]）不能重复：路径可以随便相交，但两个障碍不能共用同一个家。
+    // 圆周旋转障碍的 path[0] 只是圆心锚点，不占空间，不受这条约束。
+    var startSeen = {};
+    (level.obstacles || []).forEach(function (o) {
+      if (o.orbit) return;
+      var s = o.path && o.path[0];
+      if (!s) return;
+      var k = cellKey(s.col, s.row);
+      if (startSeen[k]) errors.push('障碍「' + (o.id || '') + '」的起始点 (' + s.col + ',' + s.row + ') 和「' + startSeen[k] + '」重叠 —— 起始点不能重复');
+      else startSeen[k] = (o.id || '');
     });
 
     return { ok: errors.length === 0, errors: errors, warnings: warnings };
@@ -202,7 +356,7 @@
   /** 生成巡逻障碍的运行时状态：沿路径点依次移动，位置是浮点像素坐标 */
   function createObstacle(data) {
     var first = gridCenter(data.path[0].col, data.path[0].row);
-    return {
+    var o = {
       id: data.id, path: data.path.slice(), speed: data.speed,
       loopMode: data.loopMode, radius: data.radius,
       x: first.x, y: first.y,
@@ -210,6 +364,25 @@
       dir: 1,          // pingpong 用：+1 前进，-1 返回
       static: data.path.length === 1
     };
+    // 圆周旋转：圆心是 path[0]（对齐方式可选「格心」或「网格十字交点」），障碍绕着它转圈。
+    // 圆心只是轨迹锚点，不占空间 —— 可以落在出生点/复活点/终点上（安全区由 inSafeZone 兜底）。
+    if (data.orbit) {
+      var cen = (data.centerSnap === 'cross') ? gridToPixel(data.path[0].col, data.path[0].row) : first;
+      o.orbit = { radius: data.orbit.radius, cw: data.orbit.cw !== false };
+      o.centerSnap = (data.centerSnap === 'cross') ? 'cross' : 'cell';
+      o.angle = data.orbit.angle || 0;
+      o.cx = cen.x; o.cy = cen.y;
+      o.static = false;
+      o.x = o.cx + o.orbit.radius * Math.cos(o.angle);
+      o.y = o.cy + o.orbit.radius * Math.sin(o.angle);
+    }
+    return o;
+  }
+
+  /** 圆周障碍的圆心像素坐标（编辑器画图与放置都用同一个算法） */
+  function orbitCenter(o) {
+    var p = o.path[0];
+    return (o.centerSnap === 'cross') ? gridToPixel(p.col, p.row) : gridCenter(p.col, p.row);
   }
 
   /** 建立一个可玩的世界（含障碍物运行时状态） */
@@ -227,6 +400,15 @@
     var list = world.obstacles;
     for (var i = 0; i < list.length; i++) {
       var o = list[i];
+      // 圆周旋转：角速度 = 线速度 ÷ 半径（v = ωr），半径越小转得越快
+      if (o.orbit) {
+        o.angle += (o.speed / o.orbit.radius) * dt * (o.orbit.cw ? 1 : -1);
+        if (o.angle > Math.PI * 2) o.angle -= Math.PI * 2;
+        else if (o.angle < 0) o.angle += Math.PI * 2;
+        o.x = o.cx + o.orbit.radius * Math.cos(o.angle);
+        o.y = o.cy + o.orbit.radius * Math.sin(o.angle);
+        continue;
+      }
       if (o.static) continue;
       var remain = o.speed * dt;
       var guard = 0;
@@ -300,11 +482,37 @@
     return null;
   }
 
+  /* ================= 安全区（底层保障） ================= */
+
+  /**
+   * 玩家方格（含边界线）是否处在「安全区」里：出生点 / 复活点 / 终点的任意一格。
+   * 底层铁律：障碍的轨迹可以随便画（圆心不占空间、路径可以穿过任何格子），
+   * 但只要玩家站在安全区内 —— 哪怕方块边缘只蹭到安全格的边界线 —— 也绝不因障碍死亡。
+   * 编辑器因此不必再限制障碍路径经过设施，游戏侧也不会出现"复活即死"。
+   */
+  function inSafeZone(level, x, y) {
+    var half = PLAYER_SIZE / 2;
+    var lists = [level.spawns, level.checkpoints, level.goals];
+    for (var i = 0; i < lists.length; i++) {
+      var list = lists[i] || [];
+      for (var k = 0; k < list.length; k++) {
+        var cx = list[k].col * GRID_SIZE, cy = list[k].row * GRID_SIZE;
+        if (x + half >= cx && x - half <= cx + GRID_SIZE && y + half >= cy && y - half <= cy + GRID_SIZE) return true;
+      }
+    }
+    return false;
+  }
+
   /* ================= 玩家 ================= */
 
+  /**
+   * 第 index 个出生区域的落脚点（多人时按人分配不同出生区域）。
+   * 区域可以是一大片格子，取整块的中心，玩家就站在区域正中间。
+   */
   function spawnPointOf(level, index) {
-    var s = level.spawns[index % level.spawns.length] || level.spawns[0];
-    return gridCenter(s.col, s.row);
+    var regs = facilityRegions(level, 'spawns');
+    if (!regs.length) return { x: GRID_SIZE / 2, y: GRID_SIZE / 2 };
+    return { x: regs[index % regs.length].anchor.x, y: regs[index % regs.length].anchor.y };
   }
 
   /**
@@ -329,9 +537,19 @@
     };
   }
 
+  /**
+   * 复活位置：踩过的复活点（整块区域）中心；没踩过任何复活点就回自己的出生区域中心。
+   */
   function respawnSpot(player, level) {
-    var cell = player.cp || level.spawns[player.index % level.spawns.length] || level.spawns[0];
-    return gridCenter(cell.col, cell.row);
+    if (player.cp) {
+      var cpRegs = facilityRegions(level, 'checkpoints');
+      for (var i = 0; i < cpRegs.length; i++) {
+        for (var k = 0; k < cpRegs[i].cells.length; k++) {
+          if (sameCell(player.cp, cpRegs[i].cells[k])) return { x: cpRegs[i].anchor.x, y: cpRegs[i].anchor.y };
+        }
+      }
+    }
+    return spawnPointOf(level, player.index);
   }
 
   /** 复活：回到最近的复活点（没经过任何复活点就回出生点），带短暂无敌 */
@@ -387,10 +605,10 @@
       }
     }
 
-    // 碰到圆形障碍 → 死亡（无敌期内不判定）
+    // 碰到圆形障碍 → 死亡（无敌期内不判定；站在出生/复活/终点安全区内永远不判死）
     if (player.invuln <= 0) {
       var hit = hitsObstacle(world, player.x, player.y, 0);
-      if (hit) {
+      if (hit && !inSafeZone(level, player.x, player.y)) {
         player.state = 'dead';
         player.deadTimer = DEATH_FREEZE;
         player.deaths++;
@@ -503,22 +721,28 @@
     var frames = obstacleTimeline(level, ticks);
     var cols = level.cols, rows = level.rows;
 
-    var spawn = level.spawns[0];
+    var spawnRegs = facilityRegions(level, 'spawns');
     var goals = {};
     level.goals.forEach(function (g) { goals[cellKey(g.col, g.row)] = 1; });
-    if (!spawn || !level.goals.length) return { ok: false, time: 0, reason: '缺少出生点或终点' };
+    if (!spawnRegs.length || !level.goals.length) return { ok: false, time: 0, reason: '缺少出生点或终点' };
     if (level.goals.some(function (g) { return isWallAt(level, g.col, g.row); })) return { ok: false, time: 0, reason: '终点在墙里' };
+    // 出生点已经是个区域：从区域里离落脚点最近的那一格开始搜
+    var startCell = nearestCell(spawnRegs[0], spawnRegs[0].anchor.x, spawnRegs[0].anchor.y);
+    var spawnPos = spawnRegs[0].anchor;
+    // 与游戏同一套底层保障：安全区（出生/复活/终点）内永不判死
+    function safeAt(tick, x, y) {
+      return inSafeZone(level, x, y) || playerSafeAt(frames[tick], x, y);
+    }
     // 出生点开局就被障碍压住 → 起手即死、复活后仍在原地，等于过不去
-    var spawnPos = gridCenter(spawn.col, spawn.row);
-    if (!playerSafeAt(frames[0], spawnPos.x, spawnPos.y)) {
+    if (!safeAt(0, spawnPos.x, spawnPos.y)) {
       return { ok: false, time: 0, reason: '出生点落在障碍巡逻线上，开局即死' };
     }
 
     // BFS：(格子, 时间片)
-    var startKey = spawn.col + ',' + spawn.row + '@0';
+    var startKey = startCell.col + ',' + startCell.row + '@0';
     var seen = {};
     seen[startKey] = 1;
-    var queue = [{ col: spawn.col, row: spawn.row, t: 0 }];
+    var queue = [{ col: startCell.col, row: startCell.row, t: 0 }];
     var head = 0;
     while (head < queue.length) {
       var cur = queue[head++];
@@ -530,7 +754,7 @@
         var k = cur.col + ',' + cur.row + '@' + nt;
         if (!seen[k]) {
           var pc = gridCenter(cur.col, cur.row);
-          if (playerSafeAt(frames[nt], pc.x, pc.y)) { seen[k] = 1; queue.push({ col: cur.col, row: cur.row, t: nt }); }
+          if (safeAt(nt, pc.x, pc.y)) { seen[k] = 1; queue.push({ col: cur.col, row: cur.row, t: nt }); }
         }
       }
       // 走到相邻格子
@@ -546,7 +770,7 @@
         var free = true;
         for (var s = 1; s <= SOLVE_MOVE_TICKS && free; s++) {           // 走的过程中每 1/4 都要安全
           var r = s / SOLVE_MOVE_TICKS;
-          if (!playerSafeAt(frames[cur.t + s], a.x + (b.x - a.x) * r, a.y + (b.y - a.y) * r)) free = false;
+          if (!safeAt(cur.t + s, a.x + (b.x - a.x) * r, a.y + (b.y - a.y) * r)) free = false;
         }
         if (!free) continue;
         seen[key] = 1;
@@ -562,13 +786,17 @@
   function reachable(level) {
     level = level.cols ? level : normalizeLevel(level);
     if (!level.spawns.length || !level.goals.length) return false;
-    var start = level.spawns[0], goal = level.goals[0];
+    var spawnRegs = facilityRegions(level, 'spawns');
+    if (!spawnRegs.length) return false;
+    var start = nearestCell(spawnRegs[0], spawnRegs[0].anchor.x, spawnRegs[0].anchor.y);
+    var goalSet = {};
+    level.goals.forEach(function (g) { goalSet[cellKey(g.col, g.row)] = 1; });
     var seen = {}, queue = [[start.col, start.row]];
     seen[cellKey(start.col, start.row)] = 1;
     var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     while (queue.length) {
       var cur = queue.shift();
-      if (cur[0] === goal.col && cur[1] === goal.row) return true;
+      if (goalSet[cellKey(cur[0], cur[1])]) return true;
       for (var i = 0; i < dirs.length; i++) {
         var nc = cur[0] + dirs[i][0], nr = cur[1] + dirs[i][1];
         if (isWallAt(level, nc, nr)) continue;
@@ -597,9 +825,13 @@
     PLAYER_SPEED: PLAYER_SPEED, DEATH_FREEZE: DEATH_FREEZE, RESPAWN_INVULN: RESPAWN_INVULN,
     RESCUE_CD: RESCUE_CD, RESCUE_FLIGHT: RESCUE_FLIGHT,
     MAX_COLS: MAX_COLS, MAX_ROWS: MAX_ROWS, MIN_COLS: MIN_COLS, MIN_ROWS: MIN_ROWS,
+    SPEED_MIN: SPEED_MIN, SPEED_MAX: SPEED_MAX, ORBIT_MIN: ORBIT_MIN, ORBIT_MAX: ORBIT_MAX,
     PLAYER_COLORS: PLAYER_COLORS, PLAYER_COLOR_NAMES: PLAYER_COLOR_NAMES, LOCAL_KEY_DESC: LOCAL_KEY_DESC,
     /* 坐标 */
     gridToPixel: gridToPixel, gridCenter: gridCenter, pixelToGrid: pixelToGrid, cellKey: cellKey,
+    /* 设施区域（出生点 / 复活点 / 终点都是一片区域） */
+    groupCells: groupCells, regions: regions, regionAnchor: regionAnchor, nearestCell: nearestCell,
+    facilityRegions: facilityRegions, regionOutline: regionOutline,
     /* 关卡 */
     createLevel: createLevel, normalizeLevel: normalizeLevel, validateLevel: validateLevel,
     isWallAt: isWallAt, staticBlockers: staticBlockers, serializeLevel: serializeLevel,
@@ -610,6 +842,8 @@
     /* 碰撞 */
     rectCircleCollide: rectCircleCollide, playerRect: playerRect, boxBlockedAt: boxBlockedAt,
     hitsObstacle: hitsObstacle,
+    /* 安全区（出生/复活/终点内不判死）与圆周圆心 */
+    inSafeZone: inSafeZone, orbitCenter: orbitCenter,
     /* 关卡可通关性（编辑器与自检共用） */
     solveReachable: solveReachable, reachable: reachable, obstacleTimeline: obstacleTimeline,
     SOLVE_STEP: SOLVE_STEP

@@ -18,14 +18,23 @@
   var PROGRESS_KEY = 'dodge.progress.v1';       // 单人进度与最好成绩
   var CUSTOM_KEY = 'dodge.custom.levels.v1';    // 编辑器做的自制关卡
 
-  /* 本地多人的键位（需求文档指定的四套） */
+  /* 本地多人的键位（玩家 1 = 方向键 + 空格接应）—— 同时也是「设置 → 键位设置 → 方块躲避」里的默认值 */
   var LOCAL_KEYS = [
-    { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', rescue: 'Space' },
-    { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', rescue: 'Enter' },
+    { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', rescue: 'Space' },
+    { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', rescue: 'KeyF' },
     { up: 'KeyI', down: 'KeyK', left: 'KeyJ', right: 'KeyL', rescue: 'KeyU' },
     { up: 'Numpad8', down: 'Numpad5', left: 'Numpad4', right: 'Numpad6', rescue: 'Numpad0' }
   ];
-  var LOCAL_KEY_NAMES = ['W A S D + 空格接应', '↑ ↓ ← → + 回车接应', 'I J K L + U 接应', '小键盘 8 4 5 6 + 0 接应'];
+  var LOCAL_KEY_NAMES = ['↑ ↓ ← → + 空格接应', 'W A S D + F 接应', 'I J K L + U 接应', '小键盘 8 4 5 6 + 0 接应'];
+
+  /** 第 i 个玩家实际用的键位：优先「设置」里方块躲避的自定义键位，没有就用默认 */
+  function keysForPlayer(i) {
+    try {
+      var k = WB.settings.keysFor('dodge', i);
+      if (k) return k;
+    } catch (e) { /* 设置层还没就绪就用默认 */ }
+    return LOCAL_KEYS[i] || LOCAL_KEYS[0];
+  }
 
   var S = {
     mode: null,              // single | local | online
@@ -134,81 +143,81 @@
     ctx.closePath();
   }
 
+  /** 设施区域：normalizeLevel 已经算好就复用，没有就现算（纯渲染用，不需要落脚点） */
+  function facRegions(lv, field) {
+    var key = field + 'Regions';
+    if (lv[key] && lv[key].length) return lv[key];
+    return DC.regions(lv[field] || []);
+  }
+
   function drawWorld(ctx, world, players, opts) {
     opts = opts || {};
     var lv = world.level;
     var W = lv.cols * CELL, H = lv.rows * CELL;
     ctx.clearRect(0, 0, W, H);
 
-    // 背景 + 网格
-    ctx.fillStyle = '#0b0f16';
+    // 背景（白底）+ 网格
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(120, 150, 200, .07)';
+    ctx.strokeStyle = 'rgba(15, 23, 42, .07)';
     ctx.lineWidth = 1;
     for (var c = 1; c < lv.cols; c++) { ctx.beginPath(); ctx.moveTo(c * CELL + .5, 0); ctx.lineTo(c * CELL + .5, H); ctx.stroke(); }
     for (var r = 1; r < lv.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * CELL + .5); ctx.lineTo(W, r * CELL + .5); ctx.stroke(); }
 
-    // 复活点（走过的会变亮绿）
+    /** 设施区域只铺一层柔和的填色，不再描边画框 —— 运行时画面更干净（编辑器里才画轮廓） */
+    function paintRegion(cells, fill) {
+      if (!cells || !cells.length) return;
+      cells.forEach(function (cell) {
+        ctx.fillStyle = fill;
+        ctx.fillRect(cell.col * CELL + 2, cell.row * CELL + 2, CELL - 4, CELL - 4);
+      });
+    }
+
+    // 复活点：黄色；已经踩过的变绿（表示"现在死了会回到这里"）
     var activeCells = {};
     players.forEach(function (p) { if (p.cp) activeCells[DC.cellKey(p.cp.col, p.cp.row)] = 1; });
-    lv.checkpoints.forEach(function (cp) {
-      var c = DC.gridCenter(cp.col, cp.row);
-      var on = activeCells[DC.cellKey(cp.col, cp.row)];
-      ctx.strokeStyle = on ? 'rgba(47, 211, 155, .95)' : 'rgba(245, 165, 36, .75)';
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([5, 4]);
-      ctx.strokeRect(c.x - 15, c.y - 15, 30, 30);
-      ctx.setLineDash([]);
-      if (on) { ctx.fillStyle = 'rgba(47, 211, 155, .16)'; ctx.fillRect(c.x - 15, c.y - 15, 30, 30); }
+    facRegions(lv, 'checkpoint').forEach(function (reg) {
+      var on = reg.cells.some(function (cell) { return activeCells[DC.cellKey(cell.col, cell.row)]; });
+      paintRegion(reg.cells, on ? 'rgba(22, 163, 74, .18)' : 'rgba(234, 179, 8, .20)');
     });
 
-    // 出生点
-    lv.spawns.forEach(function (sp) {
-      var c = DC.gridCenter(sp.col, sp.row);
-      ctx.strokeStyle = 'rgba(76, 141, 255, .55)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([3, 3]);
-      ctx.strokeRect(c.x - 17, c.y - 17, 34, 34);
-      ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(76, 141, 255, .5)';
-      ctx.beginPath(); ctx.arc(c.x, c.y, 3.5, 0, Math.PI * 2); ctx.fill();
+    // 出生点：绿色
+    facRegions(lv, 'spawn').forEach(function (reg) {
+      paintRegion(reg.cells, 'rgba(21, 128, 61, .14)');
     });
 
-    // 终点（脉冲绿）
+    // 终点：绿色（整块区域会呼吸）
     var pulse = 0.5 + 0.5 * Math.sin((world.time || 0) * 4);
-    lv.goals.forEach(function (g) {
-      var c = DC.gridCenter(g.col, g.row);
-      ctx.fillStyle = 'rgba(47, 211, 155, ' + (0.18 + pulse * 0.22).toFixed(3) + ')';
-      ctx.fillRect(c.x - CELL / 2 + 2, c.y - CELL / 2 + 2, CELL - 4, CELL - 4);
-      ctx.strokeStyle = 'rgba(47, 211, 155, .9)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(c.x - CELL / 2 + 2, c.y - CELL / 2 + 2, CELL - 4, CELL - 4);
-      ctx.fillStyle = 'rgba(47, 211, 155, ' + (0.75 + pulse * 0.25).toFixed(2) + ')';
-      ctx.beginPath(); ctx.arc(c.x, c.y, 5, 0, Math.PI * 2); ctx.fill();
+    facRegions(lv, 'goal').forEach(function (reg) {
+      paintRegion(reg.cells, 'rgba(34, 197, 94, ' + (0.16 + pulse * 0.20).toFixed(3) + ')');
+      ctx.fillStyle = 'rgba(22, 163, 74, ' + (0.55 + pulse * 0.35).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(reg.x, reg.y, 5.5, 0, Math.PI * 2); ctx.fill();
     });
 
     // 墙
     lv.walls.forEach(function (w) {
       var c = DC.gridCenter(w.col, w.row);
-      ctx.fillStyle = '#2b3648';
+      ctx.fillStyle = '#94a3b8';
       roundRect(ctx, c.x - CELL / 2 + 1, c.y - CELL / 2 + 1, CELL - 2, CELL - 2, 4);
       ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, .05)';
-      ctx.fillRect(c.x - CELL / 2 + 3, c.y - CELL / 2 + 3, CELL - 6, 3);
+      ctx.strokeStyle = 'rgba(15, 23, 42, .18)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, c.x - CELL / 2 + 1, c.y - CELL / 2 + 1, CELL - 2, CELL - 2, 4);
+      ctx.stroke();
     });
 
     // 圆形障碍（带发光）
     world.obstacles.forEach(function (o) {
       ctx.save();
-      ctx.shadowColor = 'rgba(231, 76, 60, .85)';
-      ctx.shadowBlur = 16;
+      ctx.shadowColor = 'rgba(231, 76, 60, .5)';
+      ctx.shadowBlur = 12;
       ctx.fillStyle = '#e74c3c';
       ctx.beginPath(); ctx.arc(o.x, o.y, o.radius, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
-      ctx.strokeStyle = '#8e2b21';
+      ctx.strokeStyle = '#a93226';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(o.x, o.y, o.radius - 1, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = 'rgba(255, 255, 255, .22)';
+      ctx.fillStyle = 'rgba(255, 255, 255, .45)';
       ctx.beginPath(); ctx.arc(o.x - o.radius * 0.3, o.y - o.radius * 0.35, o.radius * 0.28, 0, Math.PI * 2); ctx.fill();
     });
 
@@ -242,7 +251,7 @@
       roundRect(ctx, px - half, py - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255, 255, 255, .55)';
+      ctx.strokeStyle = 'rgba(15, 23, 42, .38)';
       ctx.lineWidth = 1.6;
       roundRect(ctx, px - half, py - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
       ctx.stroke();
@@ -267,7 +276,7 @@
       }
       if (p.name && opts.showNames) {
         ctx.globalAlpha = 0.9;
-        ctx.fillStyle = 'rgba(231, 235, 246, .85)';
+        ctx.fillStyle = 'rgba(15, 23, 42, .8)';
         ctx.font = '11px "Microsoft YaHei", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'alphabetic';
@@ -321,7 +330,7 @@
     b.textContent = '第 ' + S.levelIndex + ' 关还没开始';
     el.textContent = '';
     $('hLevel').textContent = '第 ' + (S.levelIndex + 1) + ' 关';
-    $('levelHint').textContent = (lv && lv.hint) ? lv.hint : '把每个人都送到绿色终点格。';
+    $('levelHint').textContent = (lv && lv.hint) ? lv.hint : '把每个人都送进绿色终点区域（进去任意一格都算到达）。';
   }
 
   function renderTeam() {
@@ -366,7 +375,7 @@
     });
     // 接应按键
     S.players.forEach(function (p, i) {
-      var k = LOCAL_KEYS[i] || LOCAL_KEYS[0];
+      var k = keysForPlayer(i);
       if (p.state === 'arrived' && p.rescueCd <= 0 && S.keyState[k.rescue]) {
         var moved = DC.rescue(world, S.players, i);
         if (moved.length) {
@@ -718,13 +727,14 @@
     }
   }
 
-  /** 联机时自己用哪套键：WASD 和方向键都认 */
+  /** 联机时自己用哪套键：设置里的方块躲避玩家 1 键位，WASD 和方向键也都认 */
   function readMyKeys() {
+    var k = keysForPlayer(0);
     return {
-      up: !!(S.keyState.KeyW || S.keyState.ArrowUp),
-      down: !!(S.keyState.KeyS || S.keyState.ArrowDown),
-      left: !!(S.keyState.KeyA || S.keyState.ArrowLeft),
-      right: !!(S.keyState.KeyD || S.keyState.ArrowRight)
+      up: !!(S.keyState[k.up] || S.keyState.KeyW || S.keyState.ArrowUp),
+      down: !!(S.keyState[k.down] || S.keyState.KeyS || S.keyState.ArrowDown),
+      left: !!(S.keyState[k.left] || S.keyState.KeyA || S.keyState.ArrowLeft),
+      right: !!(S.keyState[k.right] || S.keyState.KeyD || S.keyState.ArrowRight)
     };
   }
 
@@ -863,9 +873,9 @@
     ];
     function frame2() {
       t += 1 / 60;
-      ctx.fillStyle = '#0a0d13';
+      ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = 'rgba(120, 150, 200, .06)';
+      ctx.strokeStyle = 'rgba(15, 23, 42, .07)';
       for (var i = 0; i < w; i += 40) { ctx.beginPath(); ctx.moveTo(i + .5, 0); ctx.lineTo(i + .5, h); ctx.stroke(); }
       for (var j = 0; j < h; j += 40) { ctx.beginPath(); ctx.moveTo(0, j + .5); ctx.lineTo(w, j + .5); ctx.stroke(); }
       // 巡逻的圆

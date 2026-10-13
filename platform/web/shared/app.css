@@ -180,6 +180,16 @@ input[type=range]::-webkit-slider-thumb {
   box-shadow: 0 0 0 4px rgba(76, 141, 255, .18);
 }
 .wb-keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+/* 设置弹窗里的「游戏预选列表」：坦克大战 / 五子棋 / 方块躲避 */
+.wb-gamepick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.wb-gamechip {
+  padding: 7px 16px; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--line2); background: rgba(255, 255, 255, .04); color: var(--dim);
+  transition: all .15s ease;
+}
+.wb-gamechip:hover { border-color: var(--accent); color: var(--text); }
+.wb-gamechip.on { background: rgba(76, 141, 255, .22); border-color: var(--accent); color: #cfe0ff; }
+.wb-gamechip.none { opacity: .55; }
 .wb-keycol { background: rgba(10, 14, 20, .6); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; }
 .wb-keycol-title { font-size: 13px; color: var(--dim); margin-bottom: 12px; font-weight: 700; }
 .wb-keyrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }

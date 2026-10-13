@@ -8,14 +8,14 @@
 <link rel="stylesheet" href="/dodge/dodge.css">
 <link rel="stylesheet" href="/dodge/editor.css">
 </head>
-<body>
+<body class="theme-dodge">
 
 <div class="topbar">
-  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 方块躲避 / 关卡编辑器</span></div>
+  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 方块躲避 / 关卡编辑器</span><span class="dirty-flag hidden" id="dirtyFlag">● 有未保存的改动</span></div>
   <div class="topbar-right">
     <button class="btn tiny ghost" id="btnHelp">❓ 怎么用</button>
-    <a class="btn tiny ghost" href="/dodge/">▶ 去玩游戏</a>
-    <a class="btn tiny ghost" href="/">返回主页</a>
+    <button class="btn tiny ghost" id="btnGoPlay" data-leave="去玩游戏">▶ 去玩游戏</button>
+    <button class="btn tiny ghost" id="btnHome" data-leave="返回主页">返回主页</button>
   </div>
 </div>
 
@@ -43,9 +43,11 @@
       </select>
     </div>
     <div class="ed-group right">
+      <button class="btn tiny ghost" id="btnUndo" title="撤回上一步（Ctrl+Z）">↶ 撤回</button>
+      <button class="btn tiny ghost" id="btnRedo" title="恢复刚撤回的一步（Ctrl+Y）">↷ 恢复</button>
       <button class="btn tiny ghost" id="btnCheck">🔍 检查能否通关</button>
-      <button class="btn tiny ghost" id="btnPreview">▶ 预览路径</button>
-      <button class="btn tiny ghost" id="btnTest">🎮 试玩</button>
+      <button class="btn tiny ghost" id="btnPreview">▶ 预览运动</button>
+      <button class="btn tiny ok" id="btnTest">▶ 测试游玩</button>
       <button class="btn tiny ghost" id="btnLibrary">📚 关卡库</button>
       <button class="btn tiny ghost" id="btnImport">📂 导入</button>
       <button class="btn tiny ok" id="btnSave">💾 保存</button>
@@ -60,18 +62,24 @@
       <div class="tool-list" id="toolList">
         <button class="tool" data-tool="select"><i>⬚</i>选择 / 查看</button>
         <button class="tool" data-tool="wall"><i>■</i>墙体</button>
-        <button class="tool" data-tool="spawn"><i>◉</i>出生点</button>
-        <button class="tool" data-tool="checkpoint"><i>◇</i>复活点</button>
-        <button class="tool" data-tool="goal"><i>★</i>终点</button>
+        <button class="tool" data-tool="spawn"><i>◉</i>出生点（绿）</button>
+        <button class="tool" data-tool="checkpoint"><i>◇</i>复活点（黄）</button>
+        <button class="tool" data-tool="goal"><i>★</i>终点（绿）</button>
         <button class="tool" data-tool="obstacle"><i>●</i>圆形障碍</button>
       </div>
 
       <div class="tool-tip">
-        <b>墙体</b>：点一下放墙，再点一下取消<br>
-        <b>出生点 / 复活点 / 终点</b>：点格子放，再点取消<br>
-        <b>圆形障碍</b>：点空格子放一个新障碍；点已有障碍进入<b>路径编辑</b><br>
-        <b>右键</b>点障碍 = 删除整个障碍<br>
-        <b>路径点</b>：点空格子依次加路径点，点已有的小圆点可删掉该点
+        <b>选择 / 查看</b>：左键点选墙 / 出生点 / 复活点 / 终点 / 障碍，
+        按住左键拖拽 = 框选一片；选中的会显示半透明状态，右键 = 批量删除<br>
+        <b>墙体</b>：点空白处砌墙、点已有墙拆掉；按住左键拖过去能连着砌 / 连着拆<br>
+        <b>出生点 / 复活点 / 终点</b>：按住左键拖出一个<b>矩形区域</b>（相邻的同名区域会自动连成整块）；
+        出生点、终点全局只各留一处，复活点可以有很多处<br>
+        <b>圆形障碍</b>：点空格放<b>初始位置</b>，再点一下定巡逻点就<b>自动保存好</b>；点起始点（红点）选中障碍，
+        <b>按住起始点拖动</b>可以整体搬家；路径可以随便相交，只要起始点不重叠即可；
+        右侧「添加路径点」可以继续加点（点完点「保存当前路径点」收工）；
+        改成<b>圆周旋转</b>后，圆心只是轨迹锚点（可以放在出生/复活/终点上），点圆本体（初始位置在圆心正右方）选中它<br>
+        <b>右键</b>：选择模式下删掉选中的东西；点障碍也能直接删掉它（墙体工具下右键不删）<br>
+        <b>快捷键</b>：Ctrl+Z 撤回 · Ctrl+Y 恢复 · Delete 删除选中 · <b>空格 = 预览运动 / 停止</b> · Esc 收工
       </div>
 
       <div class="ed-sub">
@@ -107,7 +115,8 @@
     <div class="ed-props panel">
       <h3>属性</h3>
       <div id="propBody" class="prop-body">
-        <p class="dim small">选中一个圆形障碍后，这里可以调速度、往返/循环、半径，并编辑巡逻路径。</p>
+        <p class="dim small">选中一个圆形障碍，这里可以调<b>移动方式</b>（路径巡逻 / 圆周旋转）、速度、半径与路径点。<br>
+          选中一片墙或一块设施区域时，这里会显示它的信息。</p>
       </div>
     </div>
 
@@ -145,23 +154,56 @@
   </div>
 </div>
 
+<!-- 离开前的未保存提醒 -->
+<div class="wb-mask hidden" id="leaveMask">
+  <div class="wb-dialog" style="max-width:470px">
+    <div class="wb-dialog-head"><h3>改动还没保存</h3><button class="wb-x" id="leaveClose">×</button></div>
+    <div class="wb-dialog-body">
+      <p class="dim help-body" id="leaveText" style="margin-top:0">当前关卡有未保存的改动，要先保存吗？</p>
+      <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
+        <button class="btn tiny ok" id="leaveSave">💾 保存并继续</button>
+        <button class="btn tiny danger" id="leaveDiscard">不保存，直接走</button>
+        <button class="btn tiny ghost" id="leaveCancel">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="wb-mask hidden" id="helpMask">
-  <div class="wb-dialog" style="max-width:620px">
+  <div class="wb-dialog" style="max-width:640px">
     <div class="wb-dialog-head"><h3>编辑器怎么用</h3><button class="wb-x" id="helpClose">×</button></div>
     <div class="wb-dialog-body help-body">
       <ol>
-        <li><b>先建关卡空间</b>：在顶部填列数/行数，点「重建关卡」。建好后就能编辑了（重建会清空内容）。</li>
-        <li><b>放元素</b>：左侧选工具，然后在网格上点。墙、出生点、复活点、终点都是点一下放、再点取消。</li>
-        <li><b>放障碍并画巡逻路径</b>：选「圆形障碍」→ 点一个空格子放下障碍，此时自动进入<b>路径编辑</b>；
-          接着按顺序点你想让它经过的格子，路径点之间会用虚线连起来并标出方向。
-          点路径上的小圆点可以删掉那个点；右键点障碍可以删掉整个障碍。</li>
-        <li><b>调参数</b>：选中障碍后，右侧能调<b>速度</b>（20~300 像素/秒）、<b>往返/循环</b>、<b>半径</b>。</li>
-        <li><b>预览</b>：点顶部「预览路径」让障碍按路径动起来，再点一下停止。</li>
-        <li><b>保存前的校验</b>：<b>至少要有一个出生点和一个复活点</b>，否则不能保存；
-          出生点/复活点/终点压在墙上、和障碍巡逻点重合等问题会直接列在下方面板里。</li>
-        <li><b>保存去哪</b>：点「保存」存进本机浏览器（游戏里会以「自制关卡」出现，可以单人和本地多人玩），
-          也可以用「关卡库 → 导出为 .json 文件」把关卡发给别人；
-          想内置到游戏里，就把导出的 JSON 交给管理员，替换 <code>games/dodge/shared/levels.json</code>。</li>
+        <li><b>先建关卡空间</b>：顶部填列数 / 行数，点「重建关卡」。建好后就能编辑（重建会先问你一次）。</li>
+        <li><b>画墙体</b>：选「墙体」，在网格上按住左键拖过去就是一整排墙；点已有墙 = 拆掉。墙体工具下右键不会删东西。</li>
+        <li><b>放出生点 / 复活点 / 终点</b>：选好工具后<b>按住左键拖出一个矩形</b>，松手就落成一片区域；
+          紧挨着的同名区域会自动吸附成一整块。玩家出生在出生区域的<b>正中心</b>，
+          走进终点区域的<b>任意一格</b>都算到达。出生点和终点全局各只保留一处（画新的会替掉旧的），复活点可以画好多处。<br>
+          单击已画好的区域 = 取消那一格。</li>
+        <li><b>放障碍并画巡逻路径</b>：选「圆形障碍」→ 点一个空格子放下障碍（这就是<b>初始位置</b>），
+          <b>再点一个格子当巡逻点，障碍就自动保存好</b>，不用一直加点。
+          想画更复杂的路线：选中它 → 右侧点<b>「添加路径点」</b>（按钮会变成「保存当前路径点」），
+          然后按顺序点格子，虚线连起来标出方向；路径点之间可以随便相交（哪怕穿过别的障碍的路径），
+          加完点「保存当前路径点」收工。只点一下就点「保存当前路径点」，它就是个原地不动的障碍；
+          路径格不可点击，删路径点用属性面板里的小 <b>×</b>。起始点必须放在空格子上 —— 点在墙 / 出生点 /
+          复活点 / 终点上会选中那个设施；点障碍的起始点（红点）选中障碍，<b>按住起始点拖动</b>可以整体搬家。</li>
+        <li><b>测试游玩</b>：点「▶ 测试游玩」直接在编辑器里玩一把这关（WASD / 方向键移动），
+          障碍按你设的方式动，能试出手感；Esc 或再点一下按钮回编辑。</li>
+        <li><b>让障碍转圈（圆周移动）</b>：选中障碍后，把右侧「移动方式」改成<b>圆周旋转</b>，
+          设一个旋转半径和顺 / 逆时针。圆心只是<b>轨迹锚点</b>（不占格子，放在出生点 / 复活点 / 终点上也行），
+          <b>初始位置固定在圆心正右方</b>，点那个圆就能选中、按住拖动搬家；
+          圆心还可以对齐到<b>格子中心</b>或<b>网格十字交点</b>（右侧「圆心对齐」）。
+          速度单位仍是像素/秒，半径越小转得越快。</li>
+        <li><b>调参数</b>：选中障碍后右侧能调 <b>速度</b>（10~1000 像素/秒）、<b>往返 / 循环</b>、<b>半径</b>；
+          路径点后面有小小的 <b>×</b>，点一下删掉那个点。</li>
+        <li><b>选择 / 删除</b>：切到「选择 / 查看」后，左键点选（墙、出生点、复活点、终点、障碍都能选），
+          按住左键拖拽可以<b>框选一片</b>，选中的东西会显示半透明状态，然后<b>右键 = 批量删除</b>。</li>
+        <li><b>改错了别怕</b>：<b>Ctrl+Z</b> 撤回、<b>Ctrl+Y</b> 恢复，也可以用顶部那两个按钮，每一步改动都能退回去。</li>
+        <li><b>预览 / 检查 / 试玩</b>：点「预览运动」（或按<b>空格</b>）让障碍按你设的方式动起来；
+          点「▶ 测试游玩」自己跑一遍；点「检查能否通关」用时间展开搜索验证这关真能过。</li>
+        <li><b>保存前的校验</b>：只要<b>有出生点、有终点</b>就能保存（复活点不是必须的：没有复活点，被撞后就回出生点）。</li>
+        <li><b>保存去哪</b>：点「保存」存进本机浏览器（游戏里会以「自制关卡」出现，单人和本地多人都能玩）；
+          也能「导出为 .json」把关卡发给别人；想内置到游戏里，就把导出的 JSON 替换 <code>games/dodge/shared/levels.json</code> 里的一项。</li>
       </ol>
     </div>
   </div>

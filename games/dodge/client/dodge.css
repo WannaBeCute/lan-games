@@ -106,10 +106,10 @@
 @media (max-width: 1000px) { .game-layout { grid-template-columns: 1fr; } }
 .canvas-wrap {
   position: relative; display: flex; align-items: center; justify-content: center;
-  padding: 12px; background: rgba(9, 12, 18, .7); border: 1px solid var(--line); border-radius: 18px;
+  padding: 12px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 18px;
   box-shadow: var(--shadow); min-height: 320px;
 }
-.canvas-wrap canvas { display: block; border-radius: 10px; touch-action: none; }
+.canvas-wrap canvas { display: block; border-radius: 10px; touch-action: none; border: 1px solid #cbd5e1; }
 .side { display: flex; flex-direction: column; gap: 14px; }
 .side-panel { padding: 16px 16px 14px; }
 .side-panel h3 { margin: 0 0 12px; font-size: 15px; }
@@ -140,3 +140,104 @@
 .result-rows .r { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--dim); }
 .result-rows .r .swatch { width: 12px; height: 12px; border-radius: 3px; }
 .result-rows .r b { color: var(--text); }
+
+/* ============================================================
+   方块躲避 · 专属主题「纸上关卡」
+   米纸底 + 陶土橙 + 关卡绿 —— 有意与平台/坦克大战的深蓝风区分开：
+   这个游戏的核心画面就是白纸网格，页面跟着做成一张摊开的方格纸。
+   ============================================================ */
+
+body.theme-dodge {
+  --bg: #f4f1ea;
+  --bg2: #ece7db;
+  --panel: #ffffff;
+  --panel2: #f7f4ec;
+  --line: #ddd6c6;
+  --line2: #cbc2ac;
+  --text: #292524;
+  --dim: #6f6759;
+  --dim2: #948b7a;
+  --accent: #d9480f;        /* 陶土橙：呼应圆形障碍 */
+  --accent-d: #b83a08;
+  --ok: #2b8a3e;
+  --warn: #b45309;
+  --danger: #c92a2a;
+  --purple: #9c36b5;
+  --shadow: 0 12px 34px rgba(87, 74, 50, .18);
+  background: var(--bg);
+  background-image:
+    radial-gradient(900px 500px at 10% -6%, rgba(217, 72, 15, .08), transparent 55%),
+    radial-gradient(760px 440px at 92% 0%, rgba(43, 138, 62, .07), transparent 55%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+body.theme-dodge ::-webkit-scrollbar-thumb { background: #d8d0bd; }
+
+/* ---------- 顶栏 / 品牌 ---------- */
+.theme-dodge .topbar { background: rgba(250, 247, 240, .88); border-bottom: 1px solid var(--line); }
+.theme-dodge .brand .logo { background: linear-gradient(135deg, #e8590c, #2b8a3e); box-shadow: 0 0 14px rgba(217, 72, 15, .35); }
+
+/* ---------- 面板 / 卡片 ---------- */
+.theme-dodge .panel,
+.theme-dodge .menu-card,
+.theme-dodge .lobby {
+  background: linear-gradient(180deg, #fffdf8, #f9f6ee);
+  border-color: var(--line);
+}
+.theme-dodge .menu-card h1, .theme-dodge .lobby .room-code { color: var(--accent); }
+
+/* ---------- 按钮 ---------- */
+.theme-dodge .btn { background: #fff; border-color: var(--line2); color: var(--text); }
+.theme-dodge .btn:hover { background: #faf6ee; border-color: #b3a78a; }
+.theme-dodge .btn.primary { background: linear-gradient(180deg, #e8590c, #c9400a); border-color: #f0763a; color: #fff; box-shadow: 0 8px 20px rgba(217, 72, 15, .32); }
+.theme-dodge .btn.primary:hover { background: linear-gradient(180deg, #f0640f, #d9480f); }
+.theme-dodge .btn.ok { background: linear-gradient(180deg, #37b24d, #2b8a3e); border-color: #69db7c; color: #fff; box-shadow: 0 8px 20px rgba(43, 138, 62, .28); }
+.theme-dodge .btn.danger { background: linear-gradient(180deg, #e03131, #c92a2a); border-color: #ff6b6b; }
+.theme-dodge .btn.warn { background: linear-gradient(180deg, #e8590c, #b83a08); border-color: #f0763a; color: #fff; }
+.theme-dodge .btn.ghost { background: rgba(41, 37, 36, .04); }
+.theme-dodge .btn.ghost:hover { background: rgba(41, 37, 36, .09); }
+
+/* ---------- 输入 / 滑杆 ---------- */
+.theme-dodge .wb-input, .theme-dodge .field { background: #fff; border-color: var(--line2); color: var(--text); }
+.theme-dodge .wb-input:focus, .theme-dodge .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217, 72, 15, .15); }
+.theme-dodge input[type=range] { background: #e4ddcc; }
+.theme-dodge input[type=range]::-webkit-slider-thumb {
+  background: linear-gradient(180deg, #f08c4b, #d9480f);
+  box-shadow: 0 0 0 4px rgba(217, 72, 15, .18);
+}
+
+/* ---------- 弹窗 / toast / 键位设置 ---------- */
+.theme-dodge .wb-mask { background: rgba(64, 54, 40, .42); }
+.theme-dodge .wb-dialog { background: linear-gradient(180deg, #fffdf8, #f7f4ec); border-color: var(--line2); }
+.theme-dodge .wb-sec h4 { color: var(--accent); }
+.theme-dodge .wb-keycol { background: #faf7f0; border-color: var(--line); }
+.theme-dodge .wb-key { background: #fff; border-color: var(--line2); }
+.theme-dodge .wb-key.capturing { background: rgba(217, 72, 15, .14); border-color: var(--accent); }
+.theme-dodge .wb-gamechip { background: #fff; border-color: var(--line2); color: var(--dim); }
+.theme-dodge .wb-gamechip.on { background: rgba(217, 72, 15, .14); border-color: var(--accent); color: #7c2d12; }
+.theme-dodge .wb-toast { background: rgba(255, 253, 248, .98); border-color: var(--line2); color: var(--text); }
+.theme-dodge .wb-toast.err { border-color: rgba(201, 42, 42, .6); color: #a61e1e; }
+.theme-dodge .wb-toast.ok { border-color: rgba(43, 138, 62, .6); color: #1d5c30; }
+
+/* ---------- 游戏内组件 ---------- */
+.theme-dodge .mode-btn { background: #fff; border-color: var(--line); }
+.theme-dodge .mode-btn:hover { border-color: var(--accent); background: rgba(217, 72, 15, .05); }
+.theme-dodge .level-card, .theme-dodge .style-btn { background: #fff; border-color: var(--line); }
+.theme-dodge .level-card:hover:not(.locked), .theme-dodge .style-btn:hover { border-color: var(--accent); }
+.theme-dodge .style-btn.on, .theme-dodge .lv-pick.on, .theme-dodge .level-picks .lv-pick.on { background: rgba(217, 72, 15, .13); border-color: var(--accent); }
+.theme-dodge .pick-level .lv-pick, .theme-dodge .level-picks .lv-pick { background: #fff; border-color: var(--line); }
+.theme-dodge .level-card.custom { border-color: rgba(156, 54, 181, .55); }
+.theme-dodge .keys-preview .kp { background: #faf7f0; border-color: var(--line); color: var(--dim); }
+.theme-dodge .keys-preview var { color: var(--accent); }
+.theme-dodge .player-list li { background: #faf7f0; }
+.theme-dodge .player-list li.me { border-color: rgba(217, 72, 15, .55); background: rgba(217, 72, 15, .08); }
+.theme-dodge .team-list li { background: #faf7f0; }
+.theme-dodge .chip { background: #fff; border-color: var(--line2); color: var(--text); }
+.theme-dodge .chip.dim { color: var(--dim); }
+.theme-dodge .hintbox { color: var(--dim); }
+.theme-dodge .hintbox.dim { color: var(--dim2); }
+.theme-dodge .overlay { background: rgba(250, 247, 240, .93); }
+.theme-dodge .result-rows .r b { color: var(--text); }
+
+/* 页面滚到头露出的 html 底色也跟着变浅（Chrome/Edge 均支持 :has） */
+html:has(body.theme-dodge) { background: #f4f1ea; }
