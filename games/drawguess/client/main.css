@@ -1,0 +1,332 @@
+/*!
+ * 你画我猜 · 页面样式（在 drawguess.css 的亮色主题之上，只补游戏自己的布局）
+ */
+body { padding-bottom: 30px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 28px 22px; }
+.wrap.wide { max-width: 1360px; }
+
+.hero { text-align: center; margin: 26px 0 30px; }
+.hero h1 { margin: 0 0 10px; font-size: 40px; letter-spacing: 3px; color: var(--accent-d); }
+.hero p { margin: 0; color: var(--dim); font-size: 15px; }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 880px) { .cols { grid-template-columns: 1fr; } }
+.panel h3 { margin: 0 0 10px; }
+.panel .tip { color: var(--dim); font-size: 13px; line-height: 1.75; margin: 6px 0 12px; }
+.tip { color: var(--dim); font-size: 13px; line-height: 1.75; }
+.crumb { font-size: 13px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row.wrap { flex-wrap: wrap; }
+.spacer { flex: 1; }
+.field { flex: 1; min-width: 0; }
+
+.pill {
+  display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  background: var(--panel2); border: 1px solid var(--line2); color: var(--dim);
+}
+.pill.act { background: rgba(242, 107, 58, .13); border-color: rgba(242, 107, 58, .4); color: var(--accent-d); }
+.pill.ok { background: rgba(46, 158, 107, .13); border-color: rgba(46, 158, 107, .4); color: #22764f; }
+
+.members { display: flex; flex-direction: column; gap: 8px; }
+.mem {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 11px; font-size: 14px;
+}
+.mem.me { border-color: var(--accent); background: rgba(242, 107, 58, .07); }
+.mem .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
+.mem .nm { font-weight: 700; }
+.mem .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: #fff; border: 1px solid var(--line2); color: var(--dim); }
+.mem .tag.host { border-color: rgba(242, 107, 58, .5); color: var(--accent-d); background: rgba(242, 107, 58, .1); font-weight: 700; }
+.mem .tag.ok { border-color: rgba(46, 158, 107, .45); color: #22764f; background: rgba(46, 158, 107, .1); }
+.mem .tag.warn { border-color: rgba(224, 165, 44, .55); color: #9a6f00; background: rgba(224, 165, 44, .13); }
+.mem .tag.cd { border-color: rgba(217, 79, 79, .45); color: var(--danger); background: rgba(217, 79, 79, .09); }
+/* 已退出：留档显示，整行压暗 */
+.mem .tag.gone { border-color: var(--line2); color: var(--dim2); background: #fff; }
+.mem.gone { opacity: .62; }
+.mem.gone .nm { text-decoration: line-through; text-decoration-color: rgba(0,0,0,.25); }
+.mem .score { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--accent-d); }
+
+/* ---------------- 排行榜（对局右侧 + 两个结算弹窗共用） ---------------- */
+.lb { display: flex; flex-direction: column; gap: 6px; }
+.lbrow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 10px;
+  background: var(--panel2); border: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.lbrow .nm { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lbrow .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.lbrow .tag {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: #fff; border: 1px solid var(--line2); color: var(--dim); flex: 0 0 auto;
+}
+.lbrow .tag.host { border-color: rgba(242, 107, 58, .5); color: var(--accent-d); background: rgba(242, 107, 58, .1); font-weight: 700; }
+.lbrow .tag.cd { border-color: rgba(217, 79, 79, .45); color: var(--danger); background: rgba(217, 79, 79, .09); }
+.lbrow .tag.gone { border-color: var(--line2); color: var(--dim2); }
+.lbrow .score {
+  margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--accent-d); font-size: 15.5px; padding-left: 6px;
+}
+.lbrk {
+  flex: 0 0 22px; text-align: center; font-size: 12.5px; font-weight: 800;
+  color: var(--dim2); font-variant-numeric: tabular-nums;
+}
+.lbrk.big { font-size: 18px; line-height: 1; }
+.lbrow.me { border-color: var(--accent); background: rgba(242, 107, 58, .09); }
+/* 前三名给点颜色 */
+.lbrow.medal1 { background: linear-gradient(90deg, rgba(242, 193, 61, .3), rgba(255, 255, 255, .55)); border-color: rgba(224, 165, 44, .65); }
+.lbrow.medal2 { background: linear-gradient(90deg, rgba(168, 176, 188, .28), rgba(255, 255, 255, .55)); border-color: rgba(150, 158, 170, .55); }
+.lbrow.medal3 { background: linear-gradient(90deg, rgba(205, 140, 80, .26), rgba(255, 255, 255, .55)); border-color: rgba(190, 130, 75, .55); }
+
+/* 设置区 */
+.setRow { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.setRow label { flex: 0 0 78px; color: var(--dim); font-size: 13.5px; }
+/* 画者轮换的勾选标签要能完整显示「每人轮着画一轮」，不能被 78px 压成两行 */
+.setRow label.wb-check { flex: 1 1 auto; white-space: nowrap; }
+.setRow input[type=range] { flex: 1; height: 6px; border-radius: 999px; background: var(--line2); }
+.setRow input[type=range]::-webkit-slider-thumb { background: linear-gradient(180deg, #f8834f, #ef5f27); box-shadow: 0 0 0 4px rgba(242, 107, 58, .18); }
+.setRow .val { flex: 0 0 76px; text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--accent-d); }
+.cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin: 8px 0 4px; }
+.cat {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line2); background: #fff; font-size: 13.5px; user-select: none;
+}
+.cat.on { border-color: var(--accent); background: rgba(242, 107, 58, .09); color: var(--accent-d); font-weight: 700; }
+.cat input { display: none; }
+.cat .mark { flex: 0 0 10px; color: var(--accent-d); font-weight: 800; }
+.cat.locked { opacity: .55; cursor: default; }
+.cat .n { margin-left: auto; font-size: 11.5px; color: var(--dim2); }
+
+/* 身份选择（关闭画者轮换时） */
+#roleBox:empty { display: none; }
+.roleBox {
+  margin-top: 16px; padding: 12px 14px; border-radius: 12px;
+  border: 1px dashed var(--line2); background: var(--panel2);
+}
+.roleBox h4 { margin: 0 0 4px; font-size: 13.5px; }
+.roleBox .tip { margin: 0 0 10px; }
+.rolePick { display: flex; gap: 8px; flex-wrap: wrap; }
+.rolePick .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 抢画者 */
+.center-col { max-width: 720px; margin: 0 auto; text-align: center; }
+.center-col .members { text-align: left; }
+.big-timer { font-size: 52px; font-weight: 800; color: var(--accent-d); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.grabClock { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 14px auto 6px; max-width: 460px; }
+.grabBar { height: 100%; width: 100%; background: linear-gradient(90deg, #f8834f, #ef5f27); transition: width .9s linear; }
+.grabCols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0 6px; text-align: left; }
+@media (max-width: 700px) { .grabCols { grid-template-columns: 1fr; } }
+.grabCol h4 { margin: 0 0 8px; font-size: 13px; color: var(--dim); }
+.grabCol h4 span { color: var(--accent-d); font-weight: 800; }
+.grabCol .members { min-height: 42px; }
+.grabCol .empty { font-size: 12.5px; color: var(--dim2); padding: 8px 2px; }
+#btnGrab.on, #btnGrabNo.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 对局页：左边「状态条 + 画板」，右边「积分 + 聊天」两栏等高 */
+.playWrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 14px;
+  align-items: stretch;
+  min-width: 0;
+}
+.playLeft {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  align-content: start;
+}
+.playRight {
+  min-width: 0; min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(180px, 1fr);
+  gap: 14px;
+  align-content: start;
+}
+.playtop { padding: 14px 16px; }
+.panel .row.head { align-items: center; margin-bottom: 10px; }
+.panel .row.head h3 { margin: 0; }
+
+/* ---------------- 本局信息 ---------------- */
+.irow { display: flex; gap: 9px; align-items: baseline; font-size: 13.5px; padding: 4px 0; }
+.irow + .irow { border-top: 1px dashed var(--line); }
+.ilab {
+  flex: 0 0 52px; font-size: 11.5px; font-weight: 800; letter-spacing: .05em;
+  color: var(--dim); text-transform: none;
+}
+.irow > span:last-child { flex: 1; min-width: 0; word-break: break-word; }
+.idot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.isub {
+  margin: 12px 0 6px; font-size: 12px; color: var(--dim);
+  font-weight: 800; letter-spacing: .06em;
+}
+.ilog {
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 172px; overflow-y: auto; overscroll-behavior: contain;
+}
+.ilog .lrow {
+  display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  padding: 5px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line);
+}
+.ilog .ln { flex: 0 0 auto; font-weight: 800; color: var(--dim2); font-variant-numeric: tabular-nums; }
+.ilog .lw { font-weight: 700; color: var(--accent-d); }
+.ilog .ls { color: var(--dim); font-size: 11.5px; }
+.ilog .lt { margin-left: auto; font-size: 11px; color: var(--dim2); font-variant-numeric: tabular-nums; }
+.ilog .lrow.ok { border-color: rgba(46, 158, 107, .45); background: rgba(46, 158, 107, .08); }
+.ilog .lrow.miss { opacity: .8; }
+.infoPanel.folded #infoBody { display: none; }
+#scorePanel.folded #scoreList { display: none; }
+#scorePanel.folded .row.head { margin-bottom: 0; }
+
+/* ---------------- 本回合角色提示（画者 / 猜的人） ---------------- */
+.roleBanner {
+  position: fixed; left: 50%; top: 72px; transform: translateX(-50%);
+  z-index: 60; display: flex; align-items: center; gap: 11px;
+  padding: 12px 20px; border-radius: 14px;
+  background: rgba(255, 255, 255, .97);
+  border: 2px solid var(--accent);
+  box-shadow: 0 12px 34px rgba(120, 95, 60, .3);
+  font-size: 15.5px; font-weight: 700; color: var(--text);
+  max-width: min(640px, 88vw);
+  animation: rbIn .22s ease-out;
+  pointer-events: none;
+}
+.roleBanner.guess { border-color: #2f7de1; }
+.roleBanner .rbBadge {
+  flex: 0 0 auto; padding: 4px 12px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 13px; letter-spacing: 1px; font-weight: 800;
+}
+.roleBanner.guess .rbBadge { background: #2f7de1; }
+.roleBanner b { color: var(--accent-d); }
+.roleBanner.guess b { color: #1f5fb0; }
+@keyframes rbIn {
+  from { opacity: 0; transform: translate(-50%, -14px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* 两栏在窄屏挤不下就会互相压，早点塌成单列 */
+@media (max-width: 1240px) {
+  .playWrap { grid-template-columns: minmax(0, 1fr); }
+  .playRight { grid-template-rows: auto auto auto; }
+  .playRight .chatPanel { min-height: 260px; }
+}
+.grow { flex: 1; }
+.secretrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.secret {
+  padding: 8px 14px; border-radius: 11px; font-size: 16px;
+  background: rgba(242, 107, 58, .1); border: 1px dashed var(--accent); color: var(--accent-d);
+}
+.secret b { font-size: 19px; letter-spacing: 1px; }
+#guessBox { display: flex; gap: 10px; align-items: center; }
+.hintBtn.on { opacity: .42; }
+.hintBtn:disabled {
+  background: var(--panel2); border-color: var(--line); color: var(--dim2);
+  cursor: not-allowed; opacity: 1; font-weight: 700;
+}
+.hintWait {
+  display: inline-block; padding: 6px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  background: rgba(224, 165, 44, .14); border: 1px solid rgba(224, 165, 44, .5); color: #94690a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 猜错冷却的小胶囊：贴在输入框右边 */
+.cdChip {
+  flex: 0 0 auto; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  background: rgba(217, 79, 79, .1); border: 1px solid rgba(217, 79, 79, .38); color: var(--danger);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* 绘画区容器：高度写在一层上（pp-root 撑满 padMount），别两层都写死，
+   否则窗口一变矮就会出现"画布比面板高"的互相压盖 */
+.canvasPanel {
+  padding: 12px; position: relative;
+  display: flex; min-width: 0; overflow: hidden;
+}
+.padMount {
+  flex: 1; min-width: 0; display: flex;
+  height: clamp(340px, 60vh, 760px);
+}
+.padMount > .pp-root { flex: 1; width: 100%; height: 100%; }
+.noText {
+  position: absolute; top: 20px; right: 20px; padding: 5px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; max-width: 62%; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  background: rgba(217, 79, 79, .12); color: var(--danger); border: 1px solid rgba(217, 79, 79, .35);
+  pointer-events: none; z-index: 8;
+}
+
+/* 聊天区：跟左栏等高，日志区自己滚 */
+.chatPanel { display: flex; flex-direction: column; min-height: 220px; min-width: 0; }
+.chatLog {
+  flex: 1; min-height: 120px; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 6px; padding: 6px 2px; font-size: 14px;
+}
+/* 折叠：只留最近 3 条，输入框还在，随时能说话 */
+.chatPanel.folded .chatLog { min-height: 0; max-height: 78px; flex: 0 0 auto; }
+.chatPanel.folded .chatLog .line:not(:nth-last-child(-n+3)) { display: none; }
+.chatPanel.folded #chatTip { display: none; }
+.chatLog .line { line-height: 1.6; word-break: break-word; }
+.chatLog .who { font-weight: 700; color: var(--accent-d); }
+.chatLog .chat { padding-left: 2px; }
+.chatLog .sys { color: var(--dim2); font-size: 12.5px; }
+.chatLog .miss { color: var(--dim); }
+.chatLog .miss b { color: var(--danger); font-weight: 600; }
+.chatLog .hint { color: var(--accent-d); font-size: 13px; }
+#chatRow { margin-top: 10px; flex-wrap: wrap; }
+#chatRow .field { min-width: 120px; }
+#chatRow .btn { flex: 0 0 auto; white-space: nowrap; }
+
+.reveal { text-align: center; font-size: 30px; font-weight: 800; color: var(--accent-d); margin: 6px 0 12px; letter-spacing: 2px; }
+.big { font-size: 17px; padding: 15px 26px; }
+.btn.tiny { padding: 7px 12px; font-size: 13px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.hidden { display: none !important; }
+.dim { color: var(--dim); }
+.mono { font-family: Consolas, "Courier New", monospace; font-variant-numeric: tabular-nums; }
+.wb-dialog-foot { flex-wrap: wrap; gap: 8px; }
+
+/* ---------------- 窄屏（≤1030px）：画板在上、工具栏在下 ----------------
+   工具栏单独一行时如果还按 1fr 分配，两边会互相挤，画布被挤成 0 高。
+   这里把高度拆开写死：画板给一段固定的 vh，工具栏自己滚。 */
+@media (max-width: 1030px) {
+  .canvasPanel { overflow: visible; }
+  .padMount { height: auto; }
+  .padMount > .pp-root { height: auto; }
+}
+
+
+/* ---------------- 开局身份牌（3 秒） ---------------- */
+.rolesPanel {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 70; min-width: 320px; max-width: min(560px, 90vw);
+  background: #fffdf8; border: 2px solid var(--accent); border-radius: 16px;
+  box-shadow: 0 16px 44px rgba(120, 95, 60, .32);
+  padding: 18px 22px; text-align: center;
+  animation: rpIn .22s ease-out;
+}
+.rolesPanel .rpHead { font-size: 17px; font-weight: 800; color: var(--accent-d); margin-bottom: 12px; }
+.rolesPanel .rpList { display: flex; flex-direction: column; gap: 7px; }
+.rolesPanel .rprow {
+  display: flex; align-items: center; gap: 8px; font-size: 14.5px;
+  padding: 6px 10px; border-radius: 10px; background: var(--panel2);
+}
+.rolesPanel .rprow.draw { background: rgba(242, 107, 58, .12); font-weight: 800; color: var(--accent-d); }
+.rolesPanel .rprow .rk { margin-left: auto; font-size: 12.5px; font-weight: 800; }
+.rolesPanel .rpTip { margin-top: 10px; font-size: 12.5px; color: var(--dim); }
+@keyframes rpIn { from { opacity: 0; transform: translate(-50%, -46%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+/* ---------------- 得分明细（可折叠的「详细」） ---------------- */
+.gainLine { font-size: 14.5px; margin: 10px 0 6px; color: var(--dim); }
+.gainLine b { font-size: 19px; color: var(--ok); font-weight: 800; }
+.detailBox { margin: 2px 0 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.detailTitle {
+  width: 100%; text-align: left; padding: 7px 12px; cursor: pointer; font-family: inherit;
+  background: var(--panel2); border: 0; font-size: 13px; font-weight: 700; color: var(--dim);
+}
+.detailTitle:hover { color: var(--accent-d); }
+.detailBody { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+.detailBody .drow { display: flex; justify-content: space-between; font-size: 13px; }
+.detailBody .drow .plus { color: var(--ok); font-weight: 700; }
+.detailBody .drow .minus { color: var(--danger); font-weight: 700; }

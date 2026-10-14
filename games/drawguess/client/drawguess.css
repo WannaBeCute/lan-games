@@ -1,0 +1,68 @@
+/*!
+ * 你画我猜 · 亮色主题
+ *
+ * 这一页是暖白纸面风格，跟机房主页（深色霓虹）完全不是一套：
+ *   底色米白、卡片纯白、描边浅灰、主色橘红，全部是实色 + 极轻阴影。
+ * app.css 只是为了复用 toast / 设置弹窗的骨架，这里把变量整体覆写成亮色。
+ */
+:root {
+  --bg: #f6f1e7;
+  --bg2: #fffdf8;
+  --panel: #ffffff;
+  --panel2: #fdf6ea;
+  --line: #e6ddcd;
+  --line2: #d5c8b2;
+  --text: #3b3227;
+  --dim: #8a7c68;
+  --dim2: #a99a83;
+  --accent: #f26b3a;
+  --accent-d: #d8510f;
+  --ok: #2e9e6b;
+  --warn: #e0a52c;
+  --danger: #d94f4f;
+  --purple: #8a63d2;
+  --radius: 14px;
+  --shadow: 0 6px 22px rgba(120, 95, 60, .12);
+}
+html, body {
+  background: var(--bg);
+  background-image: radial-gradient(900px 460px at 8% -6%, rgba(242, 107, 58, .10), transparent 60%),
+                    radial-gradient(760px 420px at 94% 2%, rgba(138, 99, 210, .08), transparent 62%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #ded2bd; border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.topbar { background: rgba(255, 253, 248, .9); border-bottom: 1px solid var(--line); }
+.brand .logo { background: linear-gradient(135deg, #f7a05a, #f26b3a); box-shadow: none; }
+.net-badge { background: #fff; }
+.net-badge.ok { color: var(--ok); border-color: rgba(46, 158, 107, .45); background: rgba(46, 158, 107, .09); }
+.net-badge.wait { color: var(--warn); border-color: rgba(224, 165, 44, .5); background: rgba(224, 165, 44, .1); }
+.net-badge.bad { color: var(--danger); border-color: rgba(217, 79, 79, .45); background: rgba(217, 79, 79, .1); }
+
+.btn { border-color: var(--line2); background: #fff; color: var(--text); box-shadow: 0 2px 6px rgba(120, 95, 60, .07); }
+.btn:hover { background: var(--panel2); border-color: var(--accent); transform: translateY(-1px); }
+.btn.primary { background: linear-gradient(180deg, #f8834f, #ef5f27); border-color: #ef6a33; color: #fff; box-shadow: 0 6px 16px rgba(242, 107, 58, .3); }
+.btn.primary:hover { background: linear-gradient(180deg, #fa9060, #f4692f); }
+.btn.ok { background: linear-gradient(180deg, #46b884, #2c9264); border-color: #3aa776; color: #fff; }
+.btn.warn { background: linear-gradient(180deg, #f5c451, #dda220); border-color: #e0a52c; color: #4a3500; }
+.btn.danger { background: linear-gradient(180deg, #e86969, #cf4646); border-color: #d94f4f; color: #fff; }
+.btn.ghost { background: #fff; }
+.btn[disabled], .btn.disabled { opacity: .45; }
+
+.panel { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow); }
+.wb-input, .field { background: #fffdf8; border-color: var(--line2); color: var(--text); }
+.wb-input:focus, .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242, 107, 58, .16); }
+.wb-dialog { background: #fff; border-color: var(--line2); }
+.wb-dialog-head { border-bottom: 1px solid var(--line); }
+.wb-dialog-foot { border-top: 1px solid var(--line); }
+.wb-keycol { background: var(--panel2); border-color: var(--line); }
+.wb-key { background: #fff; border-color: var(--line2); color: var(--text); }
+.wb-sec h4 { color: var(--accent-d); }
+.wb-toast { background: #fff; border-color: var(--line2); color: var(--text); box-shadow: var(--shadow); }
+.wb-toast.err { border-color: rgba(217, 79, 79, .5); color: #b63b3b; }
+.wb-toast.ok { border-color: rgba(46, 158, 107, .5); color: #22764f; }
+.wb-mask { background: rgba(90, 74, 50, .34); }
+.dim { color: var(--dim); }

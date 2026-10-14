@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>你画我猜</title>
+<link rel="stylesheet" href="/shared/app.css">
+<link rel="stylesheet" href="/shared/friends.css">
+<link rel="stylesheet" href="/shared/chat.css">
+<!-- 资源带 ?v= 版本号：改了 drawguess 自己的 CSS/JS 后把版本号 +1，
+     否则浏览器会拿缓存的旧文件，表现为「改了却没生效」这种灵异现象 -->
+<link rel="stylesheet" href="/drawguess/drawguess.css?v=14">
+<link rel="stylesheet" href="/drawguess/paintpad.css?v=14">
+<link rel="stylesheet" href="/drawguess/main.css?v=14">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <a href="/" class="row"><span class="logo"></span>机房小游戏</a>
+    <span class="crumb dim">/ 你画我猜</span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn tiny" id="btnSettings">设置</button>
+    <button class="btn tiny" id="btnHome">主页</button>
+    <span class="net-badge" id="netBadge">未连接</span>
+  </div>
+</div>
+
+<!-- ========== 首页：建房 / 加入 ========== -->
+<div class="wrap" id="viewHome">
+  <div class="hero">
+    <h1>你画我猜</h1>
+    <p>一个人画，一屋子人抢着猜。亮色纸面版，画板里不许写字。</p>
+  </div>
+  <div class="cols">
+    <div class="panel">
+      <h3>开个房间</h3>
+      <p class="tip">房主可以在房间里选类别、定时长、选要不要轮换画者。</p>
+      <button class="btn primary big block" id="btnCreate">创建房间</button>
+      <div class="tip" id="homeTip">房间号是 4 位数字，把它告诉同机房的人就能一起玩。</div>
+    </div>
+    <div class="panel">
+      <h3>加入房间</h3>
+      <p class="tip">输入房主给的 4 位房间号。</p>
+      <div class="row">
+        <input class="field" id="joinCode" maxlength="4" inputmode="numeric" placeholder="如 4821">
+        <button class="btn primary" id="btnJoin">加入</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 大厅 ========== -->
+<div class="wrap hidden" id="viewLobby">
+  <div class="cols">
+    <div class="panel">
+      <div class="row">
+        <h3 style="margin:0">房间 <span id="roomCode" class="mono">----</span></h3>
+        <span class="spacer"></span>
+        <span class="pill" id="roomState">大厅</span>
+      </div>
+      <div class="tip">把这个房间号或邀请链接发给同学；点「复制邀请链接」也行。</div>
+      <div class="row" style="margin-top:10px">
+        <input class="field mono" id="shareLink" readonly>
+        <button class="btn" id="btnCopy">复制邀请链接</button>
+      </div>
+      <h3 style="margin-top:22px">玩家 <span class="dim" id="countText"></span></h3>
+      <div id="memberList" class="members"></div>
+      <div id="roleBox"></div>
+      <div class="row" style="margin-top:16px" id="lobbyActions"></div>
+    </div>
+
+    <div class="panel" id="settingsPanel">
+      <h3>房间设置</h3>
+      <div id="settingsBody"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 抢画者（轮换模式） ========== -->
+<div class="wrap hidden" id="viewGrab">
+  <div class="panel center-col">
+    <h2>抢画者</h2>
+    <p class="tip">愿意先画的点「我要先画」。抢到的排最前面，没抢的排最后，同一类之间随机。所有人都选完会立刻开始。</p>
+    <div class="grabClock"><div class="grabBar" id="grabBar"></div></div>
+    <div class="big-timer" id="grabTimer">15</div>
+    <div class="grabCols">
+      <div class="grabCol">
+        <h4>抢着先画 <span id="grabYesN">0</span></h4>
+        <div id="grabYes" class="members"></div>
+      </div>
+      <div class="grabCol">
+        <h4>排后面 <span id="grabNoN">0</span></h4>
+        <div id="grabNo" class="members"></div>
+      </div>
+    </div>
+    <div class="tip" id="grabWait"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary big" id="btnGrab">我要先画</button>
+      <button class="btn ghost big" id="btnGrabNo">我排后面</button>
+    </div>
+    <div class="row" style="margin-top:12px" id="grabActions"></div>
+  </div>
+</div>
+
+<!-- ========== 对局 ========== -->
+<div class="wrap wide hidden" id="viewPlay">
+  <div class="playWrap">
+    <div class="playLeft">
+      <div class="panel playtop">
+        <div class="row">
+          <b id="turnWho">等待开始</b>
+          <span class="spacer"></span>
+          <span class="pill" id="roundPill">—</span>
+          <span class="pill" id="timerPill" style="min-width:86px">--:--</span>
+          <button class="btn tiny ghost" id="btnSaveArt" title="把当前画面存成 PNG，文件名带答案">保存作品</button>
+        </div>
+        <div class="secretrow">
+          <div id="secretBox" class="secret hidden">
+            <span>你要画的是：</span><b id="secretWord">—</b>
+            <span class="dim" id="secretOrigin"></span>
+          </div>
+          <div id="guessBox" class="grow">
+            <input class="field" id="guessInput" maxlength="40" placeholder="在这里输入你的答案（必须完全一致）">
+            <span class="cdChip hidden" id="cdChip">冷却 0s</span>
+            <button class="btn primary" id="btnGuess">猜！</button>
+          </div>
+        </div>
+        <div id="hintRow" class="row wrap"></div>
+      </div>
+
+      <div class="panel canvasPanel">
+        <div id="padMount" class="padMount"></div>
+        <div class="noText" id="noText" hidden>画板里不许写字，只能画</div>
+      </div>
+    </div>
+
+    <div class="playRight">
+      <div class="panel infoPanel" id="infoPanel">
+        <div class="row head">
+          <h3>本局信息</h3>
+          <span class="spacer"></span>
+          <button class="btn tiny ghost foldBtn" data-fold="infoPanel" title="收起/展开">收起</button>
+        </div>
+        <div id="infoBody">
+          <div class="irow"><span class="ilab">任务</span><span id="infoTask">—</span></div>
+          <div class="irow"><span class="ilab">进度</span><span id="infoProgress">—</span></div>
+          <div class="irow"><span class="ilab">谁在画</span><span id="infoPainter">—</span></div>
+          <div class="irow"><span class="ilab">提示</span><span id="infoHints">—</span></div>
+          <h4 class="isub">猜对记录</h4>
+          <div id="infoLog" class="ilog"></div>
+        </div>
+      </div>
+      <div class="panel scorePanel" id="scorePanel">
+        <div class="row head">
+          <h3>积分排行榜</h3>
+          <span class="spacer"></span>
+          <button class="btn tiny ghost foldBtn" data-fold="scorePanel" title="收起/展开">收起</button>
+        </div>
+        <div id="scoreList" class="lb"></div>
+      </div>
+      <div class="panel chatPanel" id="chatPanel">
+        <div class="row head">
+          <h3>聊天区</h3>
+          <span class="spacer"></span>
+          <button class="btn tiny ghost foldBtn" data-fold="chatPanel" title="收起只留最近 3 条">收起</button>
+        </div>
+        <div class="tip" id="chatTip">除画者外都能发言，画者也能看见。回车就是发送。</div>
+        <div id="chatLog" class="chatLog"></div>
+        <div class="row" id="chatRow"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 开局身份牌：谁画谁猜（3 秒后自动进对局） ========== -->
+<div class="rolesPanel hidden" id="rolesPanel">
+  <div class="rpHead">本局身份</div>
+  <div class="rpList" id="rpList"></div>
+  <div class="rpTip" id="rpTip"></div>
+</div>
+
+<!-- ========== 本回合的角色提示（画者 / 猜的人） ========== -->
+<div class="roleBanner hidden" id="roleBanner">
+  <span class="rbBadge" id="rbBadge">你是画者</span>
+  <span class="rbText" id="rbText"></span>
+</div>
+
+<!-- ========== 单局结束（10 秒后自动关闭） ========== -->
+<div class="wb-mask hidden" id="maskTurn">
+  <div class="wb-dialog" style="max-width:560px">
+    <div class="wb-dialog-head"><h3>本回合结束</h3></div>
+    <div class="wb-dialog-body">
+      <div class="reveal" id="turnWord">—</div>
+      <div class="tip" id="turnTip"></div>
+      <div class="gainLine">本回合你 <b id="turnGain">+0</b></div>
+      <div class="detailBox hidden" id="turnDetailBox">
+        <button class="detailTitle" id="turnDetailBtn">详细</button>
+        <div class="detailBody hidden" id="turnDetail"></div>
+      </div>
+      <div id="turnScore" class="lb"></div>
+      <div class="tip" id="turnCountdown"></div>
+    </div>
+    <div class="wb-dialog-foot">
+      <button class="btn primary" id="btnTurnOk">我知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 全部结束 · 结算 ========== -->
+<div class="wb-mask hidden" id="maskOver">
+  <div class="wb-dialog" style="max-width:580px">
+    <div class="wb-dialog-head"><h3>全部对局结束 · 最终排名</h3></div>
+    <div class="wb-dialog-body">
+      <div class="reveal" id="overWord">—</div>
+      <div class="tip" id="overTip"></div>
+      <div class="gainLine">整局你 <b id="overGain">+0</b></div>
+      <div class="detailBox hidden" id="overDetailBox">
+        <button class="detailTitle" id="overDetailBtn">详细</button>
+        <div class="detailBody hidden" id="overDetail"></div>
+      </div>
+      <div id="overScore" class="lb"></div>
+      <div class="tip" id="overCountdown"></div>
+    </div>
+    <div class="wb-dialog-foot">
+      <button class="btn ghost" id="btnSaveOver">保存最后一幅</button>
+      <button class="btn" id="btnBackRoom">返回房间</button>
+      <button class="btn primary" id="btnExitRoom">退出房间</button>
+    </div>
+  </div>
+</div>
+
+<script src="/shared/core.js"></script>
+<script src="/shared/net.js"></script>
+<script src="/shared/friends.js"></script>
+<script src="/shared/chat.js"></script>
+<script src="/drawguess/paintpad.js?v=14"></script>
+<script src="/drawguess/main.js?v=14"></script>
+</body>
+</html>

@@ -1,0 +1,310 @@
+/*!
+ * 绘画区组件 PaintPad v3 的样式（跟 paintpad.js 配套）
+ *
+ * 自包含：外面只要给一个容器，里面自己排「左侧工具栏 + 中间画布」。
+ * 配色沿用 body 上那套亮色纸面变量。
+ */
+
+.pp-root {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  min-height: 0;
+  height: 100%;
+}
+
+/* 只读（猜的人）：整个左侧工具栏收起来，画布吃满宽度 */
+.pp-root.viewonly { grid-template-columns: minmax(0, 1fr); }
+.pp-root.viewonly .pp-side { display: none; }
+
+/* ---------------- 左侧工具栏 ---------------- */
+.pp-side {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+.pp-side::-webkit-scrollbar { width: 7px; }
+.pp-side::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+.pp-sec {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 10px 11px;
+}
+.pp-sec h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+/* ---------------- 图标 ---------------- */
+.pp-ico { display: inline-flex; align-items: center; justify-content: center; }
+.pp-ico svg { width: 20px; height: 20px; display: block; }
+
+/* 图标按钮（模式 / 形状 / 操作） */
+.pp-tool {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  border: 1px solid var(--line2); background: #fff; color: var(--text);
+  border-radius: 10px; padding: 8px 5px; cursor: pointer; font-family: inherit;
+  font-size: 12.5px; transition: .12s; min-width: 0;
+}
+.pp-tool:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-d); }
+.pp-tool.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pp-tool:disabled { opacity: .4; cursor: not-allowed; }
+.pp-tool.pp-wide { width: 100%; justify-content: flex-start; padding-left: 11px; margin-top: 7px; }
+.pp-tool.pp-warn { color: var(--danger); }
+.pp-tool.pp-warn:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.pp-tool.pp-warn.arming { background: var(--danger); border-color: var(--danger); color: #fff; }
+.pp-tlabel { font-size: 12.5px; }
+
+.pp-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pp-shapes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pp-actrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 2px; }
+
+/* ---------------- 笔刷选择按钮 + 菜单 ---------------- */
+.pp-bpick-wrap { position: relative; margin-top: 8px; }
+.pp-bbtn {
+  width: 100%; display: flex; align-items: center; gap: 7px;
+  border: 1px solid var(--line2); background: #fff; color: var(--text);
+  border-radius: 10px; padding: 7px 9px; cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700;
+}
+.pp-bbtn:hover { border-color: var(--accent); color: var(--accent-d); }
+.pp-bbtn .pp-ico svg { width: 17px; height: 17px; }
+.pp-bname { flex: 1; text-align: left; }
+.pp-chev .pp-ico svg, .pp-bbtn > .pp-ico.pp-chev svg { width: 14px; height: 14px; }
+.pp-chev { opacity: .65; }
+
+/* 笔刷菜单用 fixed：`.pp-side` 是滚动容器，absolute 的菜单会被裁掉 */
+.pp-bmenu {
+  position: fixed; z-index: 60; display: none;
+  width: 250px; max-width: 84vw;
+  background: #fff; border: 1px solid var(--line2); border-radius: 12px;
+  box-shadow: 0 10px 26px rgba(120, 95, 60, .22);
+  padding: 8px; box-sizing: border-box;
+}
+.pp-bmenu.open { display: block; }
+.pp-bmenu-h { font-size: 11px; color: var(--dim2); margin-bottom: 7px; line-height: 1.5; }
+/* 高度交给外层 .pp-bmenu 控制（JS 按可用空间算），这里不要再加一层滚动 */
+.pp-bmenu-grid {
+  display: grid; grid-template-columns: 1fr; gap: 5px;
+}
+.pp-bitem {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px;
+  border: 1px solid var(--line); background: var(--panel2);
+  border-radius: 9px; padding: 4px 7px; cursor: pointer; font-family: inherit;
+}
+.pp-bitem:hover { border-color: var(--accent); background: #fff; }
+.pp-bitem.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(242, 107, 58, .18); background: #fff; }
+/* 固定尺寸：画布底衬 232×68（dpr 2），这里显示成 116×34，比例一致才不会被拉伸糊掉 */
+.pp-bprev { display: block; width: 116px; height: 34px; }
+.pp-bitem-name { font-size: 11.5px; font-weight: 700; color: var(--text); white-space: nowrap; }
+
+.pp-cfghint {
+  margin-top: 8px; font-size: 11px; color: var(--dim2); line-height: 1.55;
+  padding-top: 7px; border-top: 1px dashed var(--line2);
+}
+
+/* ---------------- 滑杆 ---------------- */
+.pp-row { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+.pp-lab { font-size: 11.5px; color: var(--dim); width: 48px; flex: 0 0 48px; }
+.pp-row input[type=range] {
+  flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--line2); border-radius: 3px; outline: none;
+}
+.pp-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--accent); border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22); cursor: pointer;
+}
+.pp-val { font-size: 11.5px; color: var(--text); width: 36px; text-align: right; flex: 0 0 36px; font-variant-numeric: tabular-nums; }
+
+/* ---------------- 颜色 ---------------- */
+.pp-presets { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin-bottom: 9px; }
+.pp-preset {
+  width: 100%; aspect-ratio: 1; border-radius: 7px; cursor: pointer; padding: 0;
+  border: 1px solid rgba(0,0,0,.16); transition: .12s;
+}
+.pp-preset:hover { transform: scale(1.14); }
+.pp-preset.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); }
+
+.pp-wheelWrap { position: relative; display: flex; justify-content: center; margin-bottom: 7px; }
+.pp-wheel { width: 150px; height: 150px; cursor: crosshair; touch-action: none; display: block; }
+.pp-swatch {
+  position: absolute; right: 0; bottom: 0;
+  width: 28px; height: 28px; border-radius: 9px;
+  border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,.28);
+}
+.pp-hex { font-size: 11.5px; color: var(--dim); text-align: center; margin-bottom: 6px; font-family: ui-monospace, Consolas, monospace; }
+
+.pp-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-height: 20px; margin-bottom: 8px; }
+.pp-mini { font-size: 11px; color: var(--dim2); }
+.pp-recent-dot {
+  width: 19px; height: 19px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(0,0,0,.14); padding: 0;
+}
+.pp-recent-dot:hover { transform: scale(1.14); }
+
+.pp-check { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
+
+/* ---------------- 折叠 ---------------- */
+.pp-fold {
+  border: 0; background: none; cursor: pointer; padding: 0;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 800; color: var(--dim); letter-spacing: .06em;
+}
+.pp-fold .pp-ico svg { width: 15px; height: 15px; }
+.pp-fold::after { content: '▾'; font-size: 10px; }
+.pp-fold.folded::after { content: '▸'; }
+.pp-lhead { margin-bottom: 7px; }
+.pp-sec-layer.folded .pp-lbody { display: none; }
+
+/* ---------------- 图层 ---------------- */
+.pp-layer {
+  border: 1px solid var(--line); border-radius: 9px; padding: 6px 7px 8px;
+  cursor: pointer; background: #fff; margin-bottom: 6px;
+}
+.pp-layer.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(242,107,58,.16); }
+.pp-layer-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.pp-eye { border: 0; background: none; cursor: pointer; color: var(--dim2); padding: 0; display: flex; }
+.pp-eye .pp-ico svg { width: 15px; height: 15px; }
+.pp-eye.on { color: var(--accent); }
+.pp-lname { flex: 1; }
+.pp-ldel { border: 0; background: none; cursor: pointer; color: var(--dim2); padding: 0; display: flex; }
+.pp-ldel .pp-ico svg { width: 14px; height: 14px; }
+.pp-ldel:hover { color: var(--danger); }
+
+.pp-opa { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.pp-opa-lab { font-size: 10.5px; color: var(--dim2); flex: 0 0 40px; }
+.pp-opa input[type=range] {
+  flex: 1; min-width: 0; height: 3px; -webkit-appearance: none; appearance: none;
+  background: var(--line2); border-radius: 3px; outline: none;
+}
+.pp-opa input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent); border: 2px solid #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); cursor: pointer;
+}
+.pp-opa-val { font-size: 10.5px; color: var(--dim); width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.pp-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--line2); background: transparent; color: var(--dim);
+  border-radius: 9px; padding: 7px 8px; font-size: 12.5px; cursor: pointer; font-family: inherit;
+}
+.pp-btn:hover { border-color: var(--accent); color: var(--accent-d); }
+.pp-btn .pp-ico svg { width: 15px; height: 15px; }
+.pp-ladd { margin-top: 2px; }
+
+.pp-acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+/* ---------------- 画布 ---------------- */
+.pp-main { min-width: 0; display: flex; height: 100%; }
+.pp-canvas-wrap {
+  position: relative; flex: 1; min-width: 0; height: 100%;
+  border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--line2);
+  background: #e7ddcc;
+  touch-action: none;
+  cursor: crosshair;
+}
+/* ★ 绝对定位 + 居中：JS 按 4:3 算好尺寸写进来，容器那边只是"桌面"。
+   绝对定位保证画布不会反过来影响容器尺寸（否则会出现容器越撑越大的循环）。 */
+.pp-canvas {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: block; touch-action: none; cursor: crosshair;
+  border-radius: 10px; box-shadow: 0 2px 14px rgba(120, 95, 60, .18);
+}
+.pp-root.disabled .pp-canvas, .pp-root.disabled .pp-canvas-wrap { cursor: default; }
+
+.pp-cursor {
+  position: absolute; left: 0; top: 0;
+  border: 1.5px solid #3b3227; border-radius: 50%;
+  pointer-events: none; box-sizing: border-box; z-index: 5;
+}
+.pp-cursor.erase { border-style: dashed; border-color: #b9a68c; background: rgba(255,255,255,.5); }
+.pp-cursor.smudge { border-color: #a462e8; background: rgba(164,98,232,.16); }
+.pp-cursor.tool { border-style: dotted; border-color: #8a63d2; }
+.pp-cursor.pencil { }
+
+/* 左上角：收起/展开工具栏 */
+.pp-sidebtn {
+  position: absolute; left: 20px; top: 20px; z-index: 20;
+  display: flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line2); background: rgba(255,255,255,.94);
+  border-radius: 10px; padding: 5px 9px; cursor: pointer; font-family: inherit;
+  font-size: 12px; font-weight: 700; color: var(--text);
+  box-shadow: 0 3px 10px rgba(120,95,60,.14);
+}
+.pp-sidebtn:hover { border-color: var(--accent); color: var(--accent-d); }
+.pp-sidebtn .pp-ico svg { width: 15px; height: 15px; }
+.pp-sidelab { font-size: 12px; }
+.pp-root.folded { grid-template-columns: minmax(0, 1fr); }
+.pp-root.folded .pp-side { display: none; }
+.pp-root.viewonly .pp-sidebtn { display: none; }
+
+/* 右下角的视图控件（放右下才不会挡住右上角"不许写字"的提示；
+   z-index 抬到 20，保证永远浮在画布和平移条之上） */
+.pp-viewbar {
+  position: absolute; right: 20px; bottom: 22px; z-index: 20;
+  display: flex; align-items: center; gap: 4px; flex: 0 0 auto;
+  background: rgba(255,255,255,.94); border: 1px solid var(--line2);
+  border-radius: 11px; padding: 4px 6px; box-shadow: 0 3px 10px rgba(120,95,60,.14);
+}
+.pp-vbtn {
+  border: 0; background: none; cursor: pointer; color: var(--dim);
+  display: flex; align-items: center; padding: 3px; border-radius: 7px;
+}
+.pp-vbtn:hover { color: var(--accent-d); background: var(--panel2); }
+.pp-vbtn .pp-ico svg { width: 17px; height: 17px; }
+.pp-zlabel { font-size: 11.5px; color: var(--dim); min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---------------- 平移条（左 / 下，按住拖就能挪画布） ---------------- */
+.pp-pan {
+  position: absolute; z-index: 6;
+  background: rgba(255, 255, 255, .55);
+  border: 1px solid rgba(180, 160, 130, .5);
+  border-radius: 999px;
+  touch-action: none;
+}
+.pp-pan-x { left: 22px; right: 208px; bottom: 6px; height: 10px; cursor: grabbing; }
+.pp-pan-y { top: 22px; bottom: 22px; left: 6px; width: 10px; cursor: grabbing; }
+.pp-pan-thumb {
+  position: absolute; border-radius: 999px;
+  background: rgba(242, 107, 58, .55);
+  border: 1px solid rgba(216, 81, 15, .6);
+}
+.pp-pan-x .pp-pan-thumb { top: 1px; bottom: 1px; left: 0; width: 40px; }
+.pp-pan-y .pp-pan-thumb { left: 1px; right: 1px; top: 0; height: 40px; }
+.pp-canvas-wrap.no-pan .pp-pan { opacity: .28; cursor: default; }
+.pp-canvas-wrap.no-pan .pp-pan-thumb { background: rgba(160, 145, 125, .35); border-color: rgba(160, 145, 125, .4); }
+
+/* 全屏时把画布铺满 */
+.pp-root:fullscreen { background: #fdf8ef; padding: 10px; box-sizing: border-box; }
+.pp-root:-webkit-full-screen { background: #fdf8ef; padding: 10px; box-sizing: border-box; }
+.pp-root:fullscreen .pp-side { width: 240px; }
+
+/* 窄屏：画板在上、工具栏在下，各自给确定的尺寸，别互相挤 */
+@media (max-width: 1030px) {
+  .pp-root { display: flex; flex-direction: column; height: auto; }
+  .pp-main { flex: 0 0 auto; height: clamp(300px, 46vh, 560px); }
+  .pp-side {
+    flex: 1 1 auto;
+    max-height: 34vh;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    overflow-y: auto;
+  }
+  .pp-side > .pp-sec { flex: 1 1 200px; min-width: 190px; }
+  .pp-wheelWrap { display: none; }
+  .pp-bmenu { width: 262px; }
+}
