@@ -178,7 +178,8 @@ window.WB = window.WB || {};
   ChatApp.prototype.mount = function () {
     var self = this;
 
-    var root = el('div', 'wb-chat' + (this.min ? ' min' : '') + (this.hidden ? ' gone' : ''));
+    // wb-dark：控件自带一套深色配色，不跟所在页面的主题走（见 app.css 的注释）
+    var root = el('div', 'wb-chat wb-dark' + (this.min ? ' min' : '') + (this.hidden ? ' gone' : ''));
     root.id = 'wb-chat';
 
     var head = el('div', 'wc-head');
@@ -219,7 +220,7 @@ window.WB = window.WB || {};
     this.previewEl = preview; this.miniEl = mini; this.pane = pane; this.tabsEl = tabs;
     this.tabRoomEl = tabRoom; this.tabFriendsEl = tabFriends;
 
-    var ball = el('button', 'wc-ball');
+    var ball = el('button', 'wc-ball wb-dark');
     ball.id = 'wcBall';
     ball.type = 'button';
     ball.title = '打开聊天';

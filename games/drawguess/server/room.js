@@ -1157,6 +1157,13 @@ class DrawGuessHub {
     this.rooms.delete(code);
     console.log('[ydwg] 房间', code, '已回收');
   }
+
+  /** 在不在房间里（好友列表据此显示「组队中」并禁掉邀请按钮）；单人模式没有房间 → null */
+  busy(client) {
+    const room = this._roomOf(client);
+    if (!room) return null;
+    return { label: '房间 ' + room.code, code: room.code };
+  }
 }
 
 DrawGuessHub.title = '你画我猜';

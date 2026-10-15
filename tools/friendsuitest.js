@@ -183,12 +183,30 @@ function peer(port) {
   const hasTeamBtn = async () => evalJs(
     "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
     "return rows.some(function(r){return /小明/.test(r.textContent) && /邀请组队/.test(r.textContent);});})()");
-  /** 打开好友面板并切到「我的好友」 */
+  /**
+   * 「小明」那一行的按钮状态，形如 BTN-ENABLED-FREE / BTN-DISABLED-BUSY / NOBTN-…：
+   * 有没有邀请按钮 / 是否禁用 / 是否显示「组队中」。
+   */
+  const teamBtnState = async () => String(await evalJs(
+    "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
+    "var r=rows.filter(function(x){return /小明/.test(x.textContent);})[0];" +
+    "if(!r)return 'NOROW';" +
+    "var b=Array.from(r.querySelectorAll('button')).filter(function(x){return /邀请组队/.test(x.textContent);})[0];" +
+    "return (b?'BTN':'NOBTN')+(b?(b.disabled?'-DISABLED':'-ENABLED'):'')+(/组队中/.test(r.textContent)?'-BUSY':'-FREE');})()"));
+  /** 打开好友面板并切到「我的好友」（面板已经开着就不重复点，免得点成关闭） */
   const openFriendsTab = async () => {
-    await evalJs("document.getElementById('btnFriends').click()");
-    await waitUntil("!!document.getElementById('wb-friends-mask')");
+    if (!(await evalJs("!!document.getElementById('wb-friends-mask')"))) {
+      await evalJs("document.getElementById('btnFriends').click()");
+      await waitUntil("!!document.getElementById('wb-friends-mask')");
+    }
     await evalJs("document.querySelector('.fb-tab[data-tab=\"friends\"]').click()");
     await sleep(250);
+  };
+  const closeFriendsPanel = async () => {
+    if (await evalJs("!!document.getElementById('wb-friends-mask')")) {
+      await evalJs("document.querySelector('#wb-friends-mask .wb-x').click()");
+      await sleep(150);
+    }
   };
 
   try {
@@ -276,6 +294,13 @@ function peer(port) {
       " && document.getElementById('roomCode').textContent === '" + created.code + "';})()"));
     const teamRes = await peerClient.wait('friends.teamResult');
     ok('对方收到接受组队的回执', teamRes.accept === true, JSON.stringify(teamRes));
+    /*
+     * 换页面前先退房。无头浏览器用 CDP 导航时，旧页面的 WS 不一定马上关掉，
+     * 服务端会一直以为"这个人还在房间里"（= 组队中），后面测邀请就会被新规则挡下。
+     * 真人点链接时浏览器会正常关连接，这里只是把测试环境对齐成同样的干净状态。
+     */
+    await evalJs("__TANK_DEBUG.S.net.send({t:'tank.leave'})");
+    await sleep(500);
 
     /* ============ 6. 五子棋：?invite= 自动发起对局 ============ */
     console.log('\n== 6. 好友直达（五子棋） ==');
@@ -293,6 +318,9 @@ function peer(port) {
       "JSON.stringify({me:window.__GOMOKU_DEBUG.G.myColor,turn:window.__GOMOKU_DEBUG.G.turn,mode:window.__GOMOKU_DEBUG.G.mode})");
     ok('对局正式开始（黑白已分配）', /"mode":"online"/.test(boardInfo), boardInfo);
     await shot('friends-gomoku');
+    // 同上：走之前把对局收掉，免得旧连接一直挂在"对局中"（对服务端就是组队中）
+    peerClient.send({ t: 'gomoku.leave' });
+    await sleep(500);
 
     /* ============ 7. 受邀方停在主页也能加入（回归） ============ */
     /* 以前受邀方只要不在那个游戏页面（最常见的是停在平台主页），点接受就弹
@@ -301,6 +329,11 @@ function peer(port) {
     console.log('\n== 7. 受邀方停在主页也能加入（回归「无法识别的游戏」） ==');
     await cdp.send('Page.navigate', { url: BASE + '/' });
     ok('回到平台主页', await waitUntil("!!document.getElementById('btnFriends')"));
+    /*
+     * 上一页还在五子棋对局里 —— 对服务端来说那是「组队中」，新加的规则会直接拒掉
+     * 别人发来的组队邀请。等旧连接彻底断开（对局结束、busy 清零）再继续。
+     */
+    await sleep(1600);
     peerClient.send({ t: 'tank.create' });
     const created2 = await peerClient.wait('tank.created');
     ok('对方又建了一个坦克房间', /^\d{4}$/.test(created2.code), created2.code);
@@ -357,6 +390,80 @@ function peer(port) {
     ok('对方掉线后面板里变「离线」，且不再显示「邀请组队」', offlineOk, await evalJs(
       "(function(){var rows=Array.from(document.querySelectorAll('#fbBody .fb-row'));" +
       "return rows.length ? rows.map(function(r){return r.textContent.replace(/\\s+/g,' ');}).join(' | ') : '<面板里没有好友行>';})()"));
+
+    /* ============ 9. 「组队中」状态与邀请拦截 ============ */
+    console.log('\n== 9. 「组队中」：状态展示与邀请拦截 ==');
+    const peer2 = await peer(PORT_SRV);
+    await sleep(500);
+    await cdp.send('Page.navigate', { url: BASE + '/tank/' });
+    ok('回到坦克页并连上服务端', await waitUntil(
+      "!!window.__TANK_DEBUG && __TANK_DEBUG.S.net.status === 'open'", 10000));
+    await evalJs("__TANK_DEBUG.S.net.send({t:'tank.create'})");
+    ok('浏览器自己建了个房间（本页有局可邀了）', await waitUntil(
+      "!document.getElementById('scr-lobby').classList.contains('hidden')", 8000));
+    await openFriendsTab();
+    ok('对方没组队时：邀请按钮是亮的、也没有「组队中」',
+      (await teamBtnState()) === 'BTN-ENABLED-FREE', await teamBtnState());
+
+    peer2.send({ t: 'tank.create' });          // 对方也进房间
+    await sleep(1800);                         // 等服务端巡检 + 广播
+    await openFriendsTab();
+    ok('对方进房后：列表显示「组队中」且按钮按不动',
+      (await teamBtnState()) === 'BTN-DISABLED-BUSY', await teamBtnState());
+    await shot('friends-team-busy');
+
+    /* 用户报的场景：先收到了对方的组队邀请（还没点），自己又进了别处的组队，
+     * 回头再点那份邀请 —— 不该跳转，只提示。 */
+    await closeFriendsPanel();
+    await evalJs("__TANK_DEBUG.S.net.send({t:'tank.leave'})");
+    await sleep(1800);
+    peer2.send({
+      t: 'friends.team', ip: '127.0.0.1', game: 'tank', label: '坦克大战',
+      entry: '/tank/', param: 'join', data: { room: '4321' }, text: '房间 4321'
+    });
+    ok('自己空闲时，能收到对方的组队邀请', await waitUntil("!!document.querySelector('.fb-pop.team')"));
+    await evalJs("__TANK_DEBUG.S.net.send({t:'tank.create'})");   // 自己进房 → 组队中
+    await waitUntil("!document.getElementById('scr-lobby').classList.contains('hidden')", 8000);
+    await sleep(1800);
+
+    await evalJs("Array.from(document.querySelectorAll('.fb-pop.team .btn')).find(b=>b.textContent==='接受').click()");
+    ok('已在组队中时点「接受」→ 只提示不跳转', await waitUntil(
+      "(function(){return Array.from(document.querySelectorAll('.wb-toast'))" +
+      ".some(function(t){return /你已在组队状态中，无法接受邀请/.test(t.textContent);});})()", 4000));
+    ok('页面没有被带上 ?join= 跳走', (await evalJs("location.search")) === '', await evalJs("location.search"));
+
+    await evalJs("(function(){var x=document.querySelector('.fb-pop.team .x');if(x)x.click();return 1;})()");
+    await evalJs("__TANK_DEBUG.S.net.send({t:'tank.leave'})");
+    peer2.close();
+    await sleep(600);
+
+    /* ============ 10. 聊天浮层固定深色 + 总体 UI 主题 ============ */
+    console.log('\n== 10. 聊天浮层深色 & 主题切换 ==');
+    await cdp.send('Page.navigate', { url: BASE + '/dodge/' });
+    ok('打开方块躲避页（页面本身是浅色的「纸上关卡」主题）', await waitUntil(
+      "!!document.getElementById('wb-chat') && document.body.classList.contains('theme-dodge')", 10000));
+    const chatBg = await evalJs("getComputedStyle(document.getElementById('wb-chat')).backgroundColor");
+    const chatFg = await evalJs("getComputedStyle(document.getElementById('wb-chat')).color");
+    ok('亮色页面上，聊天控件仍保持深色底', chatBg === 'rgb(22, 28, 40)', chatBg);
+    ok('控件文字仍是浅色（对比度够）', chatFg === 'rgb(231, 235, 246)', chatFg);
+    ok('默认是深色总体主题（body 上不带 wb-light）',
+      !(await evalJs("document.body.classList.contains('wb-light')")));
+    await shot('chat-on-light-page');
+
+    await evalJs("WB.settings.setTheme('light')");
+    await sleep(150);
+    ok('设置里切到「浅色」→ 聊天控件也跟着变浅',
+      (await evalJs("getComputedStyle(document.getElementById('wb-chat')).backgroundColor")) === 'rgb(255, 255, 255)',
+      await evalJs("getComputedStyle(document.getElementById('wb-chat')).backgroundColor"));
+    ok('浅色主题记进了本机设置', /\"theme\":\"light\"/.test(
+      await evalJs("localStorage.getItem('wb.games.settings.v1') || ''")));
+    await shot('chat-on-light-theme');
+
+    await evalJs("WB.settings.setTheme('dark')");
+    await sleep(150);
+    ok('切回深色主题就恢复原样',
+      (await evalJs("getComputedStyle(document.getElementById('wb-chat')).backgroundColor")) === 'rgb(22, 28, 40)',
+      await evalJs("getComputedStyle(document.getElementById('wb-chat')).backgroundColor"));
 
     /* ============ 汇总 ============ */
     ok('全流程无 JS 报错', errors.length === 0, errors.join(' | '));

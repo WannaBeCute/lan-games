@@ -123,6 +123,7 @@ window.WB = window.WB || {};
     muted: false,
     name: '',
     rounds: 20,
+    theme: 'dark',          // 总体 UI 主题：'dark'（默认）| 'light'
     keys: clone(GAMES[0].defaults),
     keymaps: { tank: clone(GAMES[0].defaults), dodge: clone(GAMES[2].defaults) }
   };
@@ -175,7 +176,22 @@ window.WB = window.WB || {};
     save() {
       try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) { /* noop */ }
       WB.audio.setVolume(settings.sfxVolume, settings.muted);
+      settingsApi.applyTheme();
       window.dispatchEvent(new CustomEvent('wb:settings', { detail: settings }));
+    },
+    /**
+     * 把「总体 UI 主题」落到 <body> 上：浅色 = 加 wb-light（见 app.css）。
+     * 只换一套 CSS 变量，布局不动；游戏自己的主题（方块躲避的「纸上关卡」）声明更靠后，
+     * 优先级更高，所以那些页面还是它们自己的样子。
+     */
+    applyTheme() {
+      if (!document.body) return;
+      document.body.classList.toggle('wb-light', settings.theme === 'light');
+    },
+    setTheme(t) {
+      settings.theme = (t === 'light') ? 'light' : 'dark';
+      settingsApi.save();
+      return settings.theme;
     },
     reset() {
       settings = deepMerge(clone(DEFAULTS), { name: settings.name });
@@ -195,6 +211,11 @@ window.WB = window.WB || {};
     }
   };
   WB.audio_initVolume = function () { WB.audio.setVolume(settings.sfxVolume, settings.muted); };
+
+  /* 主题尽早生效：脚本都在 body 末尾，通常直接就能挂上。
+     万一以后有人把 core.js 挪到 <head>，这里也能兜住。 */
+  if (document.body) settingsApi.applyTheme();
+  else document.addEventListener('DOMContentLoaded', function () { settingsApi.applyTheme(); });
 
   /* ================= 音效（纯合成，无音频文件） ================= */
   var audio = WB.audio = (function () {
@@ -319,6 +340,17 @@ window.WB = window.WB || {};
       '<div class="wb-dialog-head"><h3>设置</h3><button class="wb-x" data-close>×</button></div>' +
       '<div class="wb-dialog-body">' +
         '<div class="wb-field"><label>昵称</label><input class="wb-input" id="wb-name" maxlength="12" placeholder="输入昵称" value="' + util.esc(s.name) + '"></div>' +
+        '<div class="wb-sec"><h4>外观</h4>' +
+          '<div class="wb-row">' +
+            '<span class="wb-lbl">总体 UI 主题</span>' +
+            '<div class="wb-gamepick" id="wb-themepick">' +
+              '<button type="button" class="wb-gamechip' + (s.theme === 'light' ? '' : ' on') + '" data-theme="dark">深色</button>' +
+              '<button type="button" class="wb-gamechip' + (s.theme === 'light' ? ' on' : '') + '" data-theme="light">浅色</button>' +
+            '</div>' +
+          '</div>' +
+          '<p class="wb-hint">浅色适合白天或投影；聊天控件、私聊窗口会跟着一起变浅。' +
+          '方块躲避有自己的「纸上关卡」配色，不受这里影响。点一下即时生效。</p>' +
+        '</div>' +
         '<div class="wb-sec"><h4>音效</h4>' +
           '<div class="wb-row">' +
             '<span class="wb-lbl">音量</span>' +
@@ -435,6 +467,18 @@ window.WB = window.WB || {};
       if (e.target === mask || e.target.hasAttribute('data-close')) close();
     });
 
+    /* ---- 外观：总体 UI 主题（点一下即时生效，不用等"保存"） ---- */
+    var themePick = panel.querySelector('#wb-themepick');
+    themePick.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-theme]') : null;
+      if (!b) return;
+      settingsApi.setTheme(b.dataset.theme);
+      Array.prototype.forEach.call(themePick.querySelectorAll('[data-theme]'), function (x) {
+        x.classList.toggle('on', x === b);
+      });
+      audio.play('click');
+    });
+
     var vol = panel.querySelector('#wb-vol');
     vol.addEventListener('input', function () {
       var v = parseInt(vol.value, 10) / 100;
@@ -455,7 +499,11 @@ window.WB = window.WB || {};
       panel.querySelector('#wb-name').value = name;
       settings.name = name;
       renderKeyArea();      // 键位整体回到默认，按当前选中的游戏重画
-      ui.toast('已恢复默认键位与音量');
+      var nowTheme = settingsApi.get().theme;    // reset 换了个新对象，别用外面的 s
+      Array.prototype.forEach.call(themePick.querySelectorAll('[data-theme]'), function (x) {
+        x.classList.toggle('on', x.dataset.theme === nowTheme);
+      });
+      ui.toast('已恢复默认（键位 / 音量 / 主题）');
     });
 
     panel.querySelector('#wb-save').addEventListener('click', function () {

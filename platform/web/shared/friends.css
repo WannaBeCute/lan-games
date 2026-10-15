@@ -30,13 +30,20 @@
 .fb-list { display: flex; flex-direction: column; gap: 8px; }
 .fb-row {
   display: flex; align-items: center; gap: 12px; padding: 10px 13px;
-  border: 1px solid var(--line); border-radius: 12px; background: rgba(10, 14, 20, .5);
+  border: 1px solid var(--line); border-radius: 12px; background: var(--field);
 }
 .fb-row .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim2); flex: none; }
 .fb-row .dot.on { background: var(--ok); box-shadow: 0 0 8px rgba(47, 211, 155, .75); }
 .fb-row .who { flex: 1; min-width: 0; }
 .fb-row .who .nm {
   font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: center; gap: 7px;
+}
+/* 「组队中」小徽标：挂在昵称后面，一眼看出这人现在邀不动 */
+.fb-row .who .nm .fb-busy {
+  flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  padding: 1px 7px; border-radius: 999px; line-height: 16px;
+  color: #ffd08a; background: rgba(245, 165, 36, .16); border: 1px solid rgba(245, 165, 36, .55);
 }
 .fb-row .who .ip {
   font-size: 12px; color: var(--dim2); margin-top: 2px;
@@ -135,12 +142,12 @@ body.wc-dock-side .wb-friends-dock .fb-chat { margin-left: var(--wb-dock-shift, 
   font-size: 13px; line-height: 1.6; word-break: break-word; white-space: pre-wrap;
 }
 .fb-chat .msg.me { align-self: flex-end; background: linear-gradient(180deg, #5a97ff, #2f6fe0); color: #fff; border-bottom-right-radius: 4px; }
-.fb-chat .msg.other { align-self: flex-start; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.fb-chat .msg.other { align-self: flex-start; background: var(--bubble-other); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 .fb-chat .msg.sys { align-self: center; background: none; color: var(--dim2); font-size: 11.5px; padding: 1px 6px; max-width: 100%; text-align: center; }
 .fb-chat .ft { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); flex: none; }
 .fb-chat .ft input {
   flex: 1; min-width: 0; padding: 8px 11px; border-radius: 9px;
-  border: 1px solid var(--line2); background: rgba(9, 12, 18, .75); color: var(--text);
+  border: 1px solid var(--line2); background: var(--field); color: var(--text);
   font-size: 13px; outline: none; font-family: inherit;
 }
 .fb-chat .ft input:focus { border-color: var(--accent); }

@@ -390,11 +390,24 @@ class DodgeHub {
     this.rooms.delete(code);
     console.log('[dodge] 房间', code, '已回收');
   }
+
+  /** 在不在房间里（好友列表据此显示「组队中」并禁掉邀请按钮）；单人模式没有房间 → null */
+  busy(client) {
+    const room = this._roomOf(client);
+    if (!room) return null;
+    return { label: '房间 ' + room.code, code: room.code };
+  }
 }
 
 DodgeHub.title = '方块躲避';        // 游戏自己声明的显示名
 DodgeHub.entry = '/dodge/';        // 访问入口
 DodgeHub.order = 30;               // 主页卡片顺序（数字小的排前面）——最新的游戏排在最后
+/*
+ * 暂时不上主页（还在打磨中）：主页不渲染这张卡片，但 /dodge/ 与 /dodge/editor.html
+ * 照常能访问、房间与路由也一切正常 —— 想进去直接在地址栏敲网址即可，给开发者留门。
+ * 等做完了把这一行删掉，卡片就回来了。
+ */
+DodgeHub.hidden = true;
 
 /** 主页卡片内容由游戏自己提供，平台只负责渲染 */
 DodgeHub.card = {

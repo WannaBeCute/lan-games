@@ -356,6 +356,18 @@ class GomokuHub {
     if (t) { clearTimeout(t); this.pending.delete(id); }
   }
 
+  /**
+   * 是不是正跟人下着棋（好友列表据此显示「组队中」并禁掉邀请按钮）。
+   * 只算真正开局的：还在等对方接受邀请的 pending 不算"在玩"，
+   * 否则刚发完邀请那几秒就没法回别人的邀请了，太硌人。
+   */
+  busy(client) {
+    const id = client ? this.byClient.get(client.id) : null;
+    const m = id ? this.matches.get(id) : null;
+    if (!m || m.state !== 'playing') return null;
+    return { label: '对局中', code: '' };
+  }
+
   /* ---------- 胜负判定 ---------- */
   _findLine(board, x, y, p) {
     const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];

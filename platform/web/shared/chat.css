@@ -1,6 +1,7 @@
 /* ===== 聊天控件（平台层通用） =====
-   配色全部走 app.css 的 CSS 变量，所以深色页面（主页 / 坦克 / 五子棋）
-   与浅色的「纸上关卡」主题（方块躲避）都能自动适配。 */
+   配色走 app.css 的 CSS 变量，控件根节点挂着 .wb-dark 作用域 ——
+   于是不管所在页面是深是浅，控件都保持自己那套深色（浅色页面里气泡、
+   文字一旦跟着变浅就糊成一片）。用户想要浅色的控件，走「设置 → 总体 UI 主题 → 浅色」。 */
 
 .wb-chat {
   position: fixed; z-index: 70; width: 296px;
@@ -22,14 +23,14 @@
   display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
   flex: none;
   cursor: move; user-select: none; touch-action: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, var(--wash), transparent);
   border-bottom: 1px solid var(--line);
 }
 .wc-title { font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
 .wc-sub { flex: 1; font-size: 11.5px; color: var(--dim2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wc-btn {
   width: 22px; height: 22px; border-radius: 6px; cursor: pointer; flex: none;
-  border: 1px solid var(--line2); background: rgba(255, 255, 255, .04); color: var(--dim);
+  border: 1px solid var(--line2); background: var(--wash-2); color: var(--dim);
   font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
 }
 .wc-btn:hover { color: var(--text); border-color: var(--accent); }
@@ -50,7 +51,7 @@
 }
 .wc-tab {
   flex: 1; padding: 6px 8px; border-radius: 9px 9px 0 0; cursor: pointer; font-size: 12.5px;
-  border: 1px solid var(--line); border-bottom: none; background: rgba(255, 255, 255, .03); color: var(--dim);
+  border: 1px solid var(--line); border-bottom: none; background: var(--wash-2); color: var(--dim);
   position: relative; z-index: 1;   /* 页签自己也抬一层，任何"下侧的面板"都盖不住它 */
 }
 .wc-tab.on { background: rgba(76, 141, 255, .16); border-color: var(--accent); color: var(--text); font-weight: 700; }
@@ -67,7 +68,7 @@
 .wc-list { overflow-y: auto; padding: 6px; }
 .wc-row {
   display: flex; align-items: center; gap: 9px; padding: 8px 10px; margin: 4px 2px;
-  border-radius: 10px; cursor: pointer; background: rgba(255, 255, 255, .035); border: 1px solid transparent;
+  border-radius: 10px; cursor: pointer; background: var(--wash-2); border: 1px solid transparent;
 }
 .wc-row:hover { border-color: var(--accent); background: rgba(76, 141, 255, .12); }
 .wc-dot { width: 8px; height: 8px; border-radius: 50%; background: #4b5563; flex: none; }
@@ -95,7 +96,7 @@
 .wc-msg .wc-from { font-size: 11px; color: var(--dim2); margin-bottom: 2px; }
 .wc-msg .wc-text {
   padding: 6px 10px; border-radius: 10px; word-break: break-word; white-space: pre-wrap;
-  background: rgba(255, 255, 255, .06); border: 1px solid var(--line);
+  background: var(--wash); border: 1px solid var(--line);
 }
 .wc-msg.me .wc-text { background: rgba(76, 141, 255, .22); border-color: rgba(76, 141, 255, .5); }
 .wc-msg .wc-ts { font-size: 10.5px; color: var(--dim2); margin-top: 2px; text-align: right; }
@@ -105,7 +106,7 @@
 .wc-input { display: flex; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
 .wc-input input {
   flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; font-size: 13px;
-  border: 1px solid var(--line2); background: rgba(9, 12, 18, .5); color: var(--text); outline: none;
+  border: 1px solid var(--line2); background: var(--field); color: var(--text); outline: none;
 }
 .wc-input input:focus { border-color: var(--accent); }
 
@@ -123,15 +124,11 @@
   background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; text-align: center;
 }
 
-/* 「纸上关卡」主题（方块躲避）下的微调：浅底上把消息气泡与输入框做成纸感 */
-.theme-dodge .wb-chat, .theme-dodge .wc-ball { background: #fffdf8; }
-.theme-dodge .wc-head { background: linear-gradient(180deg, rgba(217, 72, 15, .07), rgba(217, 72, 15, 0)); }
-.theme-dodge .wc-msg .wc-text { background: #faf7f0; border-color: var(--line); }
-.theme-dodge .wc-msg.me .wc-text { background: rgba(217, 72, 15, .14); border-color: rgba(217, 72, 15, .45); }
-.theme-dodge .wc-tab.on { background: rgba(217, 72, 15, .14); border-color: var(--accent); }
-.theme-dodge .wc-row:hover { background: rgba(217, 72, 15, .08); border-color: var(--accent); }
-.theme-dodge .wc-input input { background: #fff; }
-.theme-dodge .wc-btn { background: #fff; }
+/*
+ * 这里以前有一套 .theme-dodge 的"亮色微调"（把控件底色、气泡、输入框都刷成米纸色）。
+ * 结果是气泡(#faf7f0)和控件底(#fffdf8)只差几个色阶，糊成一片、几乎看不出气泡边界 —— 已删除。
+ * 控件现在靠 .wb-dark 作用域固定深色，见 app.css；不要在这里按页面主题改配色。
+ */
 
 /* ---------- 收纳状态下的小名单：最新消息 + 好友列表都能看到 ---------- */
 .wc-mini { display: none; flex: none; max-height: 136px; overflow-y: auto; padding: 0 6px 6px; }
@@ -139,4 +136,3 @@
 .wc-row.mini { padding: 5px 8px; margin: 2px; border-radius: 8px; font-size: 12.5px; }
 .wc-row.mini .wc-nm { font-size: 12.5px; }
 .wc-mini-empty { padding: 6px 8px; font-size: 11.5px; color: var(--dim2); }
-.theme-dodge .wc-row.mini:hover { background: rgba(217, 72, 15, .08); }

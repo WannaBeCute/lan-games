@@ -201,6 +201,64 @@ function client(tag, fip, port) {
     !teamB5.data || !teamB5.data.big, JSON.stringify(teamB5.data).slice(0, 60));
   await a.wait('friends.result');
 
+  /* 「组队中」：人进了房间就该让好友知道 —— 列表显示状态、邀请按钮禁掉。
+   * 判定由各游戏的 Hub.busy(client) 提供，服务端每秒巡检一次并广播。 */
+  console.log('\n== E3. 组队中状态识别 ==');
+  b.send({ t: 'tank.create' });
+  const tankRoom = await b.wait('tank.created');
+  ok('B 建了个坦克房间（= 进入组队）', /^\d{4}$/.test(tankRoom.code), tankRoom.code);
+  await sleep(1400);                       // 等服务端巡检跑一轮
+  a.drain('friends.state');
+  a.send({ t: 'friends.refresh' });
+  const sBusy = await a.wait('friends.state');
+  const bEntry = sBusy.friends.find(f => f.ip === IP_B) || {};
+  ok('A 看到 B 在「组队中」（带游戏名与房间号）',
+    !!(bEntry.busy && bEntry.busy.game === 'tank' && bEntry.busy.code === tankRoom.code),
+    JSON.stringify(bEntry.busy));
+  ok('A 自己没在房间里，busy 应为空', !sBusy.busy, JSON.stringify(sBusy.busy));
+
+  a.send({ t: 'friends.team', ip: IP_B, game: 'tank', data: { room: '0000' }, text: 'x' });
+  const resBusy = await a.wait('friends.result');
+  ok('邀请「组队中」的好友会被挡下', resBusy.ok === false && /组队中/.test(resBusy.msg || ''), resBusy.msg);
+
+  b.send({ t: 'tank.leave' });
+  await sleep(1400);
+  a.drain('friends.state');
+  a.send({ t: 'friends.refresh' });
+  const sFree = await a.wait('friends.state');
+  ok('B 退房后不再算「组队中」',
+    !(sFree.friends.find(f => f.ip === IP_B) || {}).busy,
+    JSON.stringify((sFree.friends.find(f => f.ip === IP_B) || {}).busy));
+
+  /* 用户的真实场景：先收到别人的组队邀请（还没点），自己又进了别的组队，
+   * 回头再点那份旧邀请 —— 不能跳转，只提示。 */
+  console.log('\n== E4. 已在组队中 → 接受邀请被拦 ==');
+  b.drain('friends.result');
+  b.send({ t: 'friends.team', ip: IP_A, game: 'tank', data: { room: '2222' }, text: '房间 2222' });
+  const inviteOk = await b.wait('friends.result');
+  ok('A 空闲时，B 的邀请发得出去', inviteOk.ok === true, inviteOk.msg);
+  await a.wait('friends.teamInvited');
+
+  a.send({ t: 'tank.create' });            // A 自己进了个房间 → 变成组队中
+  await a.wait('tank.created');
+  await sleep(1400);
+  a.drain('friends.result');
+  b.drain('friends.teamResult');
+  a.send({ t: 'friends.teamReply', ip: IP_B, accept: true, reason: 'busy' });
+  const aRes = await a.wait('friends.result');
+  ok('已在组队中时接受邀请 → 被拒并说明原因',
+    aRes.ok === false && /已在组队状态中/.test(aRes.msg || ''), aRes.msg);
+  const bRes = await b.wait('friends.teamResult');
+  ok('发起方收到「对方在组队中」的回执',
+    bRes.accept === false && bRes.reason === 'busy', JSON.stringify(bRes));
+
+  a.send({ t: 'tank.leave' });
+  await sleep(1300);
+  a.drain('friends.state');
+  a.send({ t: 'friends.refresh' });
+  const sAfter = await a.wait('friends.state');
+  ok('A 退房后 busy 清空（又能接受邀请了）', !sAfter.busy, JSON.stringify(sAfter.busy));
+
   console.log('\n== F. 拒绝好友邀请 ==');
   c.send({ t: 'friends.add', ip: IP_A });
   const resCAdd = await c.wait('friends.result');
@@ -250,7 +308,11 @@ function client(tag, fip, port) {
   ok('已是好友时重复添加被挡下', resAlready.ok === false && /已经是好友/.test(resAlready.msg || ''), resAlready.msg);
 
   console.log('\n== I. 掉线 / 重连（好友不丢） ==');
+  // 前面测「组队中」时进房/退房也会触发上下线广播，先把积压的清掉，否则这里会读到旧消息
+  a.drain('friends.presence');
+  a.drain('friends.state');
   b.close();
+  await sleep(400);                        // 等服务端处理完断开
   const presOff = await a.wait('friends.presence');
   ok('B 掉线后 A 收到离线通知', presOff.ip === IP_B && presOff.online === false);
   ok('离线通知里也带着昵称（界面才不会只剩一个 IP）', presOff.name === 'B', presOff.name);

@@ -582,12 +582,17 @@ async function onlineTests() {
   }
   const st = await (await fetch(base + '/api/status')).json();
   ok('/api/status 里有方块躲避', st.dodgeRooms === 0 && st.dodgeLevels === 10, JSON.stringify({ rooms: st.dodgeRooms, levels: st.dodgeLevels }));
-  // 别写死游戏数量：每加一个游戏都要来改这里（上次加"你画我猜"就漏了）。
-  // 只要四个已知游戏都在、而且方块躲避也在，就算自动发现正常。
+  /*
+   * 别写死游戏数量：每加一个游戏都要来改这里（上次加"你画我猜"就漏了）。
+   * /api/status 的 games 是「主页卡片列表」，声明了 Hub.hidden 的游戏（方块躲避
+   * 现在就是）不会出现在里面 —— 所以它只用来确认"别的游戏都被发现了"。
+   */
   const gnames = (st.games || []).map(g => g.name);
-  ok('游戏都被自动发现（tank/gomoku/dodge/drawguess 一个不少）',
-    ['tank', 'gomoku', 'dodge', 'drawguess'].every(n => gnames.indexOf(n) >= 0) && gnames.length >= 4,
+  ok('其它游戏都被自动发现（tank/gomoku/drawguess 一个不少）',
+    ['tank', 'gomoku', 'drawguess'].every(n => gnames.indexOf(n) >= 0) && gnames.length >= 3,
     gnames.join(','));
+  ok('方块躲避从主页隐藏了（但服务端照常装配）',
+    gnames.indexOf('dodge') < 0 && st.dodgeLevels === 10, 'games=' + gnames.join(','));
   ok('没有消息路由冲突', (st.routeConflicts || []).length === 0);
 
   /* 建房 */

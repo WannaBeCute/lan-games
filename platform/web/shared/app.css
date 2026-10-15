@@ -17,6 +17,103 @@
   --purple: #c85dff;
   --radius: 14px;
   --shadow: 0 18px 50px rgba(0, 0, 0, .55);
+  /*
+   * 三个"中性层"变量：以前各处直接写 rgba(255,255,255,.0x) / rgba(9,12,18,.5)，
+   * 一旦要出浅色主题，几十处硬编码就很难翻。抽成变量后，浅色主题只改这三个。
+   */
+  --wash: rgba(255, 255, 255, .06);      /* 悬停 / 输入框 之类，轻轻提亮一层 */
+  --wash-2: rgba(255, 255, 255, .035);   /* 更淡的一层：列表条目、幽灵按钮 */
+  --field: rgba(9, 12, 18, .6);          /* 输入框 / 键位框的凹陷底色 */
+  --bubble-other: rgba(255, 255, 255, .07);   /* 聊天里"对方"的气泡底色 */
+}
+
+/* ============================================================
+ *  总体 UI 主题 = 浅色
+ *  由 core.js 按本机设置挂在 <body> 上（设置 → 外观 → 总体 UI 主题）。
+ *  只换变量、不动布局；游戏自己的主题（方块躲避的「纸上关卡」）声明更靠后，
+ *  优先级更高，所以在它自己的页面上依然是它那套配色。
+ * ============================================================ */
+body.wb-light {
+  --bg: #eef1f6;
+  --bg2: #e4e9f2;
+  --panel: #ffffff;
+  --panel2: #f4f6fa;
+  --line: #dbe2ec;
+  --line2: #c2ccdd;
+  --text: #1b2432;
+  --dim: #56627a;
+  --dim2: #8892a4;
+  --accent: #2f6fe0;
+  --accent-d: #2559b8;
+  --ok: #0f9668;
+  --warn: #ad6800;
+  --danger: #d63546;
+  --purple: #8d3fd0;
+  --shadow: 0 16px 40px rgba(30, 44, 68, .16);
+  --wash: rgba(15, 23, 42, .055);
+  --wash-2: rgba(15, 23, 42, .035);
+  --field: #ffffff;
+  --bubble-other: rgba(15, 23, 42, .06);
+  background: var(--bg);
+  background-image:
+    radial-gradient(900px 520px at 12% -8%, rgba(47, 111, 224, .10), transparent 60%),
+    radial-gradient(800px 480px at 92% 4%, rgba(141, 63, 208, .08), transparent 62%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+body.wb-light .topbar { background: rgba(255, 255, 255, .82); border-bottom-color: var(--line); }
+
+/* ============================================================
+ *  固定深色作用域（.wb-dark）
+ *  聊天控件、私聊小窗这些浮层挂在整个页面的最上层，自带底色。
+ *  页面主题（比如方块躲避那张"纸"）会把 --panel / --text 换成浅底深字，
+ *  浮层跟着变浅的话，气泡底色和文字会糊成一片（实测过，对比度极差），
+ *  所以它们重新声明一套深色变量，跟页面主题脱钩。
+ *  用户要是不喜欢深色，可以在设置里把「总体 UI 主题」调成浅色 ——
+ *  那时下面的 body.wb-light 规则会把浮层也一起变浅。
+ * ============================================================ */
+.wb-dark {
+  --bg: #0d1017;
+  --bg2: #121722;
+  --panel: #161c28;
+  --panel2: #1c2432;
+  --line: #2a3546;
+  --line2: #38455c;
+  --text: #e7ebf6;
+  --dim: #93a1ba;
+  --dim2: #6b7a92;
+  --accent: #4c8dff;
+  --accent-d: #2f6fe0;
+  --ok: #2fd39b;
+  --warn: #f5a524;
+  --danger: #ff5d6c;
+  --purple: #c85dff;
+  --shadow: 0 18px 50px rgba(0, 0, 0, .55);
+  --wash: rgba(255, 255, 255, .06);
+  --wash-2: rgba(255, 255, 255, .035);
+  --field: rgba(9, 12, 18, .6);
+  --bubble-other: rgba(255, 255, 255, .07);
+}
+/* 显式选了浅色主题 → 浮层跟着浅（同样要有能看清的气泡底色） */
+body.wb-light .wb-dark {
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel2: #f4f6fa;
+  --line: #dbe2ec;
+  --line2: #c2ccdd;
+  --text: #1b2432;
+  --dim: #56627a;
+  --dim2: #8892a4;
+  --accent: #2f6fe0;
+  --ok: #0f9668;
+  --warn: #ad6800;
+  --danger: #d63546;
+  --shadow: 0 16px 40px rgba(30, 44, 68, .18);
+  --wash: rgba(15, 23, 42, .055);
+  --wash-2: rgba(15, 23, 42, .035);
+  --field: #ffffff;
+  --bubble-other: rgba(15, 23, 42, .06);
 }
 
 * { box-sizing: border-box; }
@@ -59,8 +156,8 @@ button { font-family: inherit; }
 .btn.ok { background: linear-gradient(180deg, #3fe0ac, #1fae82); border-color: #5cf0c0; color: #06231a; }
 .btn.danger { background: linear-gradient(180deg, #ff7481, #e2455a); border-color: #ff8f9a; }
 .btn.warn { background: linear-gradient(180deg, #ffbe4d, #e0901a); border-color: #ffcd75; color: #2a1a00; }
-.btn.ghost { background: rgba(255, 255, 255, .04); }
-.btn.ghost:hover { background: rgba(255, 255, 255, .09); }
+.btn.ghost { background: var(--wash-2); }
+.btn.ghost:hover { background: var(--wash); }
 .btn.tiny { padding: 7px 13px; font-size: 13px; border-radius: 9px; }
 .btn.big { padding: 16px 30px; font-size: 18px; border-radius: 14px; }
 .btn[disabled], .btn.disabled { opacity: .42; pointer-events: none; }
@@ -84,7 +181,7 @@ button { font-family: inherit; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .net-badge {
   font-size: 12px; padding: 5px 11px; border-radius: 999px;
-  border: 1px solid var(--line2); color: var(--dim); background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line2); color: var(--dim); background: var(--wash-2);
   white-space: nowrap;
 }
 .net-badge.ok { color: var(--ok); border-color: rgba(47, 211, 155, .5); background: rgba(47, 211, 155, .1); }
@@ -138,7 +235,7 @@ button { font-family: inherit; }
 /* ---------- 输入 ---------- */
 .wb-input, .field {
   width: 100%; padding: 12px 14px; border-radius: 11px;
-  border: 1px solid var(--line2); background: rgba(9, 12, 18, .75); color: var(--text);
+  border: 1px solid var(--line2); background: var(--field); color: var(--text);
   font-size: 15px; outline: none; transition: border-color .15s ease, box-shadow .15s ease;
 }
 .wb-input:focus, .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76, 141, 255, .18); }
@@ -184,19 +281,19 @@ input[type=range]::-webkit-slider-thumb {
 .wb-gamepick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .wb-gamechip {
   padding: 7px 16px; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 600;
-  border: 1px solid var(--line2); background: rgba(255, 255, 255, .04); color: var(--dim);
+  border: 1px solid var(--line2); background: var(--wash-2); color: var(--dim);
   transition: all .15s ease;
 }
 .wb-gamechip:hover { border-color: var(--accent); color: var(--text); }
 .wb-gamechip.on { background: rgba(76, 141, 255, .22); border-color: var(--accent); color: #cfe0ff; }
 .wb-gamechip.none { opacity: .55; }
-.wb-keycol { background: rgba(10, 14, 20, .6); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; }
+.wb-keycol { background: var(--field); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; }
 .wb-keycol-title { font-size: 13px; color: var(--dim); margin-bottom: 12px; font-weight: 700; }
 .wb-keyrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
 .wb-keyrow span { font-size: 14px; color: var(--dim); }
 .wb-key {
   min-width: 96px; padding: 7px 12px; border-radius: 9px; cursor: pointer;
-  border: 1px solid var(--line2); background: rgba(255, 255, 255, .05); color: var(--text);
+  border: 1px solid var(--line2); background: var(--wash); color: var(--text);
   font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 .wb-key:hover { border-color: var(--accent); }

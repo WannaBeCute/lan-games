@@ -94,6 +94,7 @@ window.WB = window.WB || {};
     this.online = [];      // 除我以外的在线者 [{ip,name,friend,requested}]
     this.friends = [];     // 好友 [{ip,name,online,code}]
     this.requests = [];    // 收到的好友邀请 [{ip,name,ts}]
+    this.myBusy = null;    // 我自己在不在组队里（服务端下发）→ 在的话不能再接受别人的组队邀请
     this.histories = {};   // ip -> [msg]
     this.rendered = {};    // ip -> {mid:true} 已渲染的消息（回显去重）
     this.chatWins = {};    // ip -> 聊天小窗实例
@@ -177,6 +178,11 @@ window.WB = window.WB || {};
       self.online = m.online || [];
       self.friends = m.friends || [];
       self.requests = m.requests || [];
+      /*
+       * busy = 我自己现在在不在组队里（服务端按各游戏的 Hub.busy 算出来的）。
+       * 已经在别人房里的时候，再点别人的组队邀请就得拦住 —— 见 _onTeamInvited。
+       */
+      self.myBusy = m.busy || null;
       if (self.panelOpen) self.renderBody();
       self.renderBadge();
       // 换页面后把刚才开着的私聊小窗按最新的好友数据重建（标题、在线状态都是新的）
@@ -200,7 +206,12 @@ window.WB = window.WB || {};
     net.on('friends.teamInvited', function (m) { self._onTeamInvited(m); });
 
     net.on('friends.teamResult', function (m) {
-      WB.ui.toast(m.name + (m.accept ? ' 接受了你的组队邀请' : ' 拒绝了你的组队邀请'), m.accept ? 'ok' : 'err');
+      var text;
+      if (m.accept) text = m.name + ' 接受了你的组队邀请';
+      // 对方不是不想来，是已经在别人队里了 —— 说清楚，免得以为被无视
+      else if (m.reason === 'busy') text = m.name + ' 正在组队中，没能加入';
+      else text = m.name + ' 拒绝了你的组队邀请';
+      WB.ui.toast(text, m.accept ? 'ok' : 'err');
       WB.audio.play(m.accept ? 'go' : 'error');
     });
   };
@@ -223,7 +234,7 @@ window.WB = window.WB || {};
       else host.appendChild(btn);
       btn.addEventListener('click', function () { WB.audio.play('click'); self.togglePanel(); });
     }
-    this.dock = el('div', 'wb-friends-dock');
+    this.dock = el('div', 'wb-friends-dock wb-dark');
     this.dock.id = 'wb-friends-dock';
     document.body.appendChild(this.dock);
     // 视口一变（拉窗口、开/关 DevTools），停靠区高度跟着变：把最新的那个孩子重新露出来，
@@ -250,7 +261,7 @@ window.WB = window.WB || {};
   /* ---------------- 左下角弹窗 ---------------- */
   FriendApp.prototype._popup = function (cls) {
     var self = this;
-    var p = el('div', 'fb-pop ' + (cls || ''));
+    var p = el('div', 'fb-pop wb-dark ' + (cls || ''));
     var x = el('button', 'x', '×');
     x.title = '关闭';
     p.appendChild(x);
@@ -320,6 +331,16 @@ window.WB = window.WB || {};
     var no = el('button', 'btn ghost', '拒绝');
     ok.addEventListener('click', function () {
       rec.close();
+      /*
+       * 我自己已经在别人的队伍里了 → 不跳转、不入座，只提示。
+       * （服务端也会兜一道，这里拦是为了"当场就说清楚"，别让人白等一次跳转）
+       */
+      if (self.myBusy) {
+        WB.audio.play('error');
+        WB.ui.toast('你已在组队状态中，无法接受邀请', 'err');
+        self.net.send({ t: 'friends.teamReply', ip: m.from, accept: false, reason: 'busy' });
+        return;
+      }
       WB.audio.play('click');
       self.net.send({ t: 'friends.teamReply', ip: m.from, accept: true });
       // 当前页面就是这个游戏 → 直接入座；否则带上参数跳过去（免输入邀请码）
@@ -545,6 +566,13 @@ window.WB = window.WB || {};
       var who = el('div', 'who');
       var nm = el('div', 'nm');
       nm.textContent = f.name || f.ip;
+      // 正在跟别人玩（人已经进房间了）→ 名字后面挂个「组队中」，一眼能看出来为什么邀不动
+      if (f.online && f.busy) {
+        var tag = el('span', 'fb-busy', '组队中');
+        tag.title = '正在' + (f.busy.gameTitle ? '「' + f.busy.gameTitle + '」' : '')
+          + (f.busy.label ? ' ' + f.busy.label : '') + '组队，暂时不能邀请他';
+        nm.appendChild(tag);
+      }
       var sub = el('div', 'ip');
       sub.textContent = f.ip + (f.online ? '' : ' · 离线');
       who.appendChild(nm); who.appendChild(sub);
@@ -561,13 +589,22 @@ window.WB = window.WB || {};
       /* 「邀请组队」只在两个条件都满足时出现：
        *   ① 对方在线 —— 离线的人点了也送不到，白点一下
        *   ② 本页确实有局可邀（canInvite 有东西）—— 比如正待在房间大厅里。
-       *      单机菜单、平台主页、对局中……这些页面根本不知道该邀什么，就不摆这个按钮了。 */
+       *      单机菜单、平台主页、对局中……这些页面根本不知道该邀什么，就不摆这个按钮了。
+       * 对方要是已经在别人的队伍里，按钮照旧摆着但**按不动**（画个灰的），
+       * 比直接消失更好懂：功能在，只是这时候用不了。 */
       if (f.online && teamOpts.length) {
         var team = el('button', 'btn tiny ok', '邀请组队');
-        team.addEventListener('click', function () {
-          WB.audio.play('click');
-          self._teamMenu(team, f.ip);
-        });
+        if (f.busy) {
+          team.disabled = true;
+          team.classList.remove('ok');
+          team.classList.add('ghost');
+          team.title = '对方正在组队中，暂时无法邀请';
+        } else {
+          team.addEventListener('click', function () {
+            WB.audio.play('click');
+            self._teamMenu(team, f.ip);
+          });
+        }
         acts.appendChild(team);
       }
 
@@ -666,7 +703,10 @@ window.WB = window.WB || {};
       this.online.splice(i, 1);
     }
     this.friends.forEach(function (f) {
-      if (f.ip === m.ip) { f.online = !!m.online; if (m.name) f.name = m.name; }
+      if (f.ip !== m.ip) return;
+      f.online = !!m.online;
+      if (m.name) f.name = m.name;
+      f.busy = f.online ? (m.busy || null) : null;   // 离线的人谈不上"组队中"
     });
     var w = this.chatWins[m.ip];
     if (w) w.setStatus(!!m.online);
@@ -691,7 +731,8 @@ window.WB = window.WB || {};
     }
     var online = !!(fr && fr.online);
 
-    var root = el('div', 'fb-chat');
+    // wb-dark：小窗自带深色配色，不跟页面主题走（浅色页面上气泡会糊底）
+    var root = el('div', 'fb-chat wb-dark');
     var hd = el('div', 'hd');
     var dot = el('span', 'dot' + (online ? ' on' : ''));
     var nm = el('div', 'nm');

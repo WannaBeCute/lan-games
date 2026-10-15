@@ -88,6 +88,8 @@ class Friends {
      * 昵称跟着"这台电脑"走，和好友关系一样是长期的，所以单独记一份。
      */
     this.names = new Map();
+    /** ip -> 上次算出来的「组队中」摘要（用来发现变化，变了才广播，别每秒都刷屏） */
+    this._busyKeys = new Map();
     this._timers = new Set();
     this._saveTimer = null;
     this._load();
@@ -114,6 +116,16 @@ class Friends {
         if (raw.names && typeof raw.names === 'object') {
           for (const ip of Object.keys(raw.names)) {
             if (typeof raw.names[ip] === 'string') this.names.set(ip, raw.names[ip]);
+          }
+        }
+        /*
+         * 历史数据回填：早期的存档只记了"好友关系 + 聊天记录"，没有昵称表。
+         * 结果是升级之后老朋友只要不在线，好友列表里就只剩一个 IP。
+         * 聊天记录的每一条都带着发送者昵称，正好用来把名字补回来。
+         */
+        for (const list of this.chats.values()) {
+          for (const m of list) {
+            if (m && m.from && m.name && !this.names.has(m.from)) this.names.set(m.from, m.name);
           }
         }
       }
@@ -149,10 +161,7 @@ class Friends {
    */
   onHello(client) {
     // 记住这台电脑最后用过的昵称：掉线后好友列表还能显示名字，而不是一个光秃秃的 IP
-    if (client.name && this.names.get(client.ip) !== client.name) {
-      this.names.set(client.ip, client.name);
-      this._persist();
-    }
+    this._rememberName(client.ip, client.name);
     if (client._friendsSeen) {
       // 改名：刷新在线记录并让好友看到新名字
       const rec = this.online.get(client.ip);
@@ -174,6 +183,10 @@ class Friends {
       this.online.set(client.ip, { count: 1, name: client.name, code: client.inviteCode, client });
       this._notifyPresence(client.ip, true);
     }
+    // 记下此刻的组队状态：状态是随 _sendState 一起发出去的，
+    // 不先对齐的话，下一秒的巡检会以为"变了"而多广播一次
+    const busy = this._teamOf(client.ip);
+    this._busyKeys.set(client.ip, busy ? (busy.game + ':' + (busy.code || busy.label)) : '');
     this._sendState(client);
   }
 
@@ -190,6 +203,7 @@ class Friends {
       return;
     }
     this.online.delete(client.ip);
+    this._busyKeys.delete(client.ip);
     this._notifyPresence(client.ip, false);
   }
 
@@ -225,13 +239,14 @@ class Friends {
    */
   _notifyPresence(ip, online) {
     const rec = this.online.get(ip);
-    const name = rec ? rec.name : (this.names.get(ip) || '');
+    const name = this._nameOf(ip, rec);
     for (const [cip, crec] of this.online) {
       if (cip === ip) continue;
       const c = crec.client;
       if (!c) continue;
       this._send(c, {
         t: 'friends.presence', ip, name, online,
+        busy: this._teamOf(ip),                 // 在不在组队里（列表据此显示「组队中」）
         friend: this.areFriends(cip, ip),
         requested: this._hasRequest(ip, cip)
       });
@@ -262,15 +277,77 @@ class Friends {
       const rec = this.online.get(fip);
       // 离线的好友也保留昵称（记在 names 里），别退化成只显示 IP
       friends.push({
-        ip: fip, name: rec ? rec.name : (this.names.get(fip) || fip),
-        online: !!rec, code: rec ? rec.code : ''
+        ip: fip, name: this._nameOf(fip, rec) || fip,
+        online: !!rec, code: rec ? rec.code : '',
+        busy: this._teamOf(fip)          // 对方正在组队 → 列表里显示「组队中」并禁掉邀请
       });
     }
     const requests = [];
     for (const r of (this.requests.get(me) || [])) {
       requests.push({ ip: r.from, name: r.name, ts: r.ts });
     }
-    this._send(client, { t: 'friends.state', me, online, friends, requests });
+    // busy 是"我自己"的状态：我已经在别人房里，就不该再接受第三方的邀请
+    this._send(client, {
+      t: 'friends.state', me, online, friends, requests,
+      busy: this._teamOf(me)
+    });
+  }
+
+  /**
+   * 记下这台电脑的昵称。
+   * 好友身份是 IP，但人看的是名字 —— 只要见过一次就存下来，
+   * 这样对方以后一直不在线，列表里也还是「小明」而不是「10.1.1.9」。
+   */
+  _rememberName(ip, name) {
+    const n = String(name || '').trim();
+    if (!ip || !n) return;
+    if (this.names.get(ip) === n) return;
+    this.names.set(ip, n);
+    this._persist();
+  }
+
+  /** 某台电脑现在该显示什么名字：在线记录最准，其次昵称表，最后才退回 IP */
+  _nameOf(ip, rec) {
+    const r = rec || this.online.get(ip);
+    if (r && r.name) return r.name;
+    return this.names.get(ip) || '';
+  }
+
+  /**
+   * 这台电脑现在是不是在「组队」里（哪个游戏、哪个房间由游戏自己说，见 ctx.teamOf）。
+   * 同一台电脑可能开着好几个页面，只要有一个在组队里就算 —— 否则"一边挂机一边被邀请"会漏判。
+   * 离线 / 没在房间里 → null。
+   */
+  _teamOf(ip) {
+    if (!this.ctx || !this.ctx.teamOf) return null;
+    if (!this.online.has(ip)) return null;              // 人都不在，谈不上组队
+    for (const c of this.ctx.clients.values()) {
+      if (c.ip !== ip) continue;
+      const b = this.ctx.teamOf(c);
+      if (b) return b;
+    }
+    return null;
+  }
+
+  /**
+   * 每秒对一遍「组队中」状态（由 server.cjs 的主循环调用）。
+   * 有变化才广播 —— 建房、入房、离开、开局都能让好友列表实时跟着变，
+   * 但没人组队时这里一直什么都不做，不产生任何流量。
+   */
+  detectTeamChanges() {
+    for (const ip of this.online.keys()) {
+      const busy = this._teamOf(ip);
+      const key = busy ? (busy.game + ':' + (busy.code || busy.label)) : '';
+      if (this._busyKeys.get(ip) === key) continue;
+      this._busyKeys.set(ip, key);
+      this._notifyPresence(ip, true);       // 让别人看到「组队中」
+      /*
+       * 也要把新状态告诉**本人**：presence 只发给别人，而"我自己在不在组队里"
+       * 决定了要不要拦住别人的组队邀请（见 friends.js 的 myBusy）。
+       * 这一步只能在状态真变了的时候做，别每秒刷。
+       */
+      for (const c of this.ctx.clients.values()) if (c.ip === ip) this._sendState(c);
+    }
   }
 
   _hasRequest(toIp, fromIp) {
@@ -309,6 +386,9 @@ class Friends {
 
     if (!this.requests.has(ip)) this.requests.set(ip, []);
     this.requests.get(ip).push({ from: client.ip, name: client.name, ts: Date.now() });
+    // 加好友这一刻双方都在线，名字一定拿得到 —— 趁机存下来，别等以后再靠 IP 认人
+    this._rememberName(client.ip, client.name);
+    this._rememberName(ip, target.name);
     this._send(target, { t: 'friends.invited', from: client.ip, name: client.name });
     this._send(client, { t: 'friends.result', ok: true, msg: '好友邀请已发送给 ' + target.name });
 
@@ -321,6 +401,8 @@ class Friends {
     const req = this._takeRequest(client.ip, ip);
     if (!req) { this._send(client, { t: 'friends.result', ok: false, msg: '邀请不存在或已过期' }); return; }
     this._addPair(client.ip, ip);
+    this._rememberName(ip, req.name);          // 邀请里带着发起方的昵称，记下来
+    this._rememberName(client.ip, client.name);
     this._persist();
     const other = this._clientByIp(ip);
     if (other) {
@@ -388,6 +470,18 @@ class Friends {
     if (!this.areFriends(client.ip, ip)) { this._send(client, { t: 'friends.result', ok: false, msg: '只能邀请好友组队' }); return; }
     const target = this._clientByIp(ip);
     if (!target) { this._send(client, { t: 'friends.result', ok: false, msg: '对方不在线' }); return; }
+    /*
+     * 对方正在跟别人组队（人已经在房间里了）→ 别打扰。
+     * 他那边点接受也会被拦（见 teamReply），所以在这里就挡下来，两边都清爽。
+     */
+    const targetBusy = this._teamOf(ip);
+    if (targetBusy) {
+      this._send(client, {
+        t: 'friends.result', ok: false,
+        msg: '对方正在' + (targetBusy.gameTitle ? '「' + targetBusy.gameTitle + '」' : '') + '组队中，暂时无法邀请'
+      });
+      return;
+    }
     const game = String((msg && msg.game) || '').slice(0, 24);
     if (!game) { this._send(client, { t: 'friends.result', ok: false, msg: '缺少游戏标识' }); return; }
     const data = safeTeamData(msg && msg.data);
@@ -410,18 +504,39 @@ class Friends {
     const ip = String((msg && msg.ip) || '').trim();
     const inv = this._takeTeamInvite(client.ip, ip);
     if (!inv) return;
+    /*
+     * 自己已经在组队里了（在别人的房间/对局中）→ 不能接受邀请。
+     * 客户端点「接受」时会先自查并弹提示，这里再兜一道：
+     * 旧页面、刷新了半天没更新的标签页，都别想绕过去。
+     */
+    const mineBusy = this._teamOf(client.ip);
+    if (msg.accept && mineBusy) {
+      const other = this._clientByIp(ip);
+      if (other) {
+        this._send(other, {
+          t: 'friends.teamResult', ip: client.ip, name: client.name,
+          accept: false, game: inv.game, reason: 'busy'
+        });
+      }
+      this._send(client, { t: 'friends.result', ok: false, msg: '你已在组队状态中，无法接受邀请' });
+      return;
+    }
     const other = this._clientByIp(ip);
     if (other) {
       this._send(other, {
         t: 'friends.teamResult', ip: client.ip, name: client.name,
-        accept: !!msg.accept, game: inv.game
+        accept: !!msg.accept, game: inv.game,
+        reason: String((msg && msg.reason) || '').slice(0, 16)   // 比如 'busy'：对方那会儿正在组队
       });
     }
-    this._send(client, {
-      t: 'friends.result',
-      ok: true,
-      msg: msg.accept ? ('已接受 ' + inv.name + ' 的组队邀请') : ('已拒绝 ' + inv.name + ' 的组队邀请')
-    });
+    // 因"自己正在组队"而拒绝的，客户端点的时候就自己提示过了，别再回一条重复的
+    if (msg.reason !== 'busy') {
+      this._send(client, {
+        t: 'friends.result',
+        ok: true,
+        msg: msg.accept ? ('已接受 ' + inv.name + ' 的组队邀请') : ('已拒绝 ' + inv.name + ' 的组队邀请')
+      });
+    }
   }
 
   /** 客户端主动拉一次全量状态（打开好友面板时用，保证列表是最新的） */

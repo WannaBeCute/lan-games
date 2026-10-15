@@ -173,7 +173,23 @@ const ctx = {
   send,
   clients,
   findByInviteCode: (code) => byInviteCode.get(String(code || '').toUpperCase().trim()) || null,
-  listOnline: () => Array.from(clients.values()).map(c => ({ name: c.name, code: c.inviteCode, ip: c.ip }))
+  listOnline: () => Array.from(clients.values()).map(c => ({ name: c.name, code: c.inviteCode, ip: c.ip })),
+  /**
+   * 这个连接现在是不是「在组队里」（在某个房间中 / 联机对局中）。
+   *
+   * 各游戏用可选方法 Hub.busy(client) 声明自己怎么看这件事：返回 null 表示"这人现在
+   * 是闲的"，返回 { label } 表示"在忙"。平台因此保持"不认识任何游戏规则"——
+   * 单人模式天然不进房间，所以不会返回 busy，正好符合"单人游戏不算组队"。
+   */
+  teamOf: (client) => {
+    if (!client) return null;
+    for (const g of games) {
+      let b = null;
+      try { b = g.hub.busy ? g.hub.busy(client) : null; } catch (e) { b = null; }
+      if (b) return { game: g.name, gameTitle: g.title, label: b.label || '', code: b.code || '' };
+    }
+    return null;
+  }
 };
 
 /* ============================================================
@@ -182,7 +198,9 @@ const ctx = {
  *    Hub.routes  : { 消息类型: Hub 方法名 }
  *    Hub.title   : 显示名
  *    Hub.entry   : 访问入口（如 /tank/）
+ *    Hub.hidden  : true = 不出现在主页卡片里（但仍能用 /入口/ 直连，方便开发中的游戏）
  *    hub.stats() : 给 /api/status 的统计
+ *    hub.busy(client)                          : 这个人现在是不是在组队里（好友列表显示「组队中」）
  *    hub.onClose(client) / hub.onRename(client) : 生命周期钩子
  *    hub.step(dt) / hub.broadcast(dt)          : 需要按帧推进的游戏才实现
  * ============================================================ */
@@ -244,7 +262,8 @@ for (const mod of loadGameModules()) {
   const entry = mod.Hub.entry || ('/' + mod.name + '/');
   const card = (mod.Hub.card && typeof mod.Hub.card === 'object') ? mod.Hub.card : null;
   const order = Number.isFinite(mod.Hub.order) ? mod.Hub.order : 100;
-  games.push({ name: mod.name, title, entry, order, card, hub });
+  const hidden = mod.Hub.hidden === true;         // 声明 hidden 的游戏不上主页（直连入口仍然有效）
+  games.push({ name: mod.name, title, entry, order, card, hub, hidden });
 
   const warn = (msg) => {
     gameWarnings.push({ game: mod.name, msg: msg });
@@ -393,7 +412,8 @@ const server = http.createServer((req, res) => {
        * 主页就拿这个列表渲染卡片 —— 所以「新增游戏 = 新建一个文件夹」是真的，
        * 不需要谁回来手改 platform/web/index.html。
        */
-      games: games.map(g => ({
+      // Hub.hidden 的游戏不出现在这里（主页就没有卡片），但静态挂载与路由照旧
+      games: games.filter(g => !g.hidden).map(g => ({
         name: g.name,
         title: g.title,
         entry: g.entry,
@@ -475,6 +495,14 @@ setInterval(() => {
   }
   eachHub((hub) => { if (hub.broadcast) hub.broadcast(dt); });
 }, 8);
+
+/*
+ * 「组队中」状态巡检：各游戏用 Hub.busy(client) 声明自己在不在房间里，
+ * 这里每秒对一遍，有变化才通知好友系统广播 ——
+ * 于是别人建房、入房、离开，我这边好友列表里的「组队中」能跟着变。
+ * 没人组队时这里什么都不做，不产生额外流量。
+ */
+setInterval(() => { friends.detectTeamChanges(); }, 1000).unref();
 
 /* 心跳 */
 setInterval(() => {

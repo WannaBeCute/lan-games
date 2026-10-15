@@ -240,6 +240,17 @@ class TankHub {
 
   onClose(client) { this.leave(client); }
 
+  /**
+   * 这个人现在是不是「在组队里」（大厅等待中或对局中都算）。
+   * 好友列表据此显示「组队中」并禁掉邀请按钮 —— 正在跟别人玩的人，不该被拉走。
+   * 单人模式压根没有房间，自然返回 null，正好符合"单人游戏不算组队"。
+   */
+  busy(client) {
+    const room = client && client.room;
+    if (!room) return null;
+    return { label: '房间 ' + room.code, code: room.code };
+  }
+
   /* ---------- 大厅配置 ---------- */
   config(client, msg) {
     const room = client.room;

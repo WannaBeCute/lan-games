@@ -66,6 +66,7 @@ function scan() {
       return {
         name, dir, Hub, hub, hubError,
         title: Hub.title, entry: Hub.entry, order: Hub.order,
+        hidden: Hub.hidden === true,        // 声明不上主页（入口仍可直连）
         routes: Hub.routes || {}, card: Hub.card || null
       };
     } catch (e) {
@@ -182,8 +183,23 @@ async function startServer() {
 
     const apiNames = (st.games || []).map(g => g.name).sort().join(',');
     const dirNames = mods.map(m => m.name).sort().join(',');
-    ok('自动发现的游戏与 games/ 下的目录完全一致（没漏也没多）', apiNames === dirNames,
-      '接口=' + apiNames + '  磁盘=' + dirNames);
+    /*
+     * 主页列表 = games/ 下的目录 **减去** 声明了 Hub.hidden 的游戏。
+     * hidden 只是"先不上主页"（还在打磨），游戏本身照常加载、路由照常装配。
+     */
+    const visibleNames = mods.filter(m => !m.hidden).map(m => m.name).sort().join(',');
+    ok('主页列表 = games/ 目录减去声明 Hub.hidden 的游戏', apiNames === visibleNames,
+      '接口=' + apiNames + '  可见=' + visibleNames + '  磁盘=' + dirNames);
+
+    /* 隐藏的游戏必须还能直连 —— 否则"给开发者留门"就成了空话 */
+    const hiddenMods = mods.filter(m => m.hidden);
+    ok('声明 Hub.hidden 的游戏都不上主页', hiddenMods.every(m => apiNames.indexOf(m.name) < 0),
+      hiddenMods.length ? hiddenMods.map(m => m.name).join(', ') : '（当前没有）');
+    for (const m of hiddenMods) {
+      const hr = await fetch(base + (m.entry || ('/' + m.name + '/')));
+      ok('隐藏的 ' + m.name + ' 仍能用 ' + (m.entry || ('/' + m.name + '/')) + ' 直连', hr.status === 200,
+        'HTTP ' + hr.status);
+    }
 
     ok('没有消息路由冲突', Array.isArray(st.routeConflicts) && st.routeConflicts.length === 0,
       JSON.stringify(st.routeConflicts));
