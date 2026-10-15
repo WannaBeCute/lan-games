@@ -134,6 +134,7 @@
 
   /* ================= 绘制 ================= */
   function roundRect(ctx, x, y, w, h, r) {
+    if (!r) { ctx.rect(x, y, w, h); return; }   // 半径 0 = 标准直角矩形（玩家方块走这条）
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -142,6 +143,8 @@
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
+  /** 永远是直角的方块（玩家）：标准正方形，不带圆角 */
+  function squareRect(ctx, x, y, w, h) { ctx.beginPath(); ctx.rect(x, y, w, h); }
 
   /** 设施区域：normalizeLevel 已经算好就复用，没有就现算（纯渲染用，不需要落脚点） */
   function facRegions(lv, field) {
@@ -206,19 +209,15 @@
       ctx.stroke();
     });
 
-    // 圆形障碍（带发光）
+    // 圆形障碍：实心平色，**不发光、不反光**（2026-10-15 定：看到的圆就是判定用的圆）
+    // 描边画在半径内侧（r - 线宽/2），保证"最外圈的像素"正好落在 radius 上，
+    // 视觉边界与 rectCircleCollide 的判定边界严格一致。
     world.obstacles.forEach(function (o) {
-      ctx.save();
-      ctx.shadowColor = 'rgba(231, 76, 60, .5)';
-      ctx.shadowBlur = 12;
       ctx.fillStyle = '#e74c3c';
       ctx.beginPath(); ctx.arc(o.x, o.y, o.radius, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
       ctx.strokeStyle = '#a93226';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(o.x, o.y, o.radius - 1, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = 'rgba(255, 255, 255, .45)';
-      ctx.beginPath(); ctx.arc(o.x - o.radius * 0.3, o.y - o.radius * 0.35, o.radius * 0.28, 0, Math.PI * 2); ctx.fill();
     });
 
     // 玩家
@@ -247,13 +246,14 @@
         ctx.fillStyle = p.color;
       }
       ctx.shadowColor = p.color;
-      ctx.shadowBlur = p.state === 'playing' ? 14 : 0;
-      roundRect(ctx, px - half, py - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
+      ctx.shadowBlur = 0;              // 不发光：看到多大就多大
+      // 标准正方形，没有圆角（round = 0 → 直接走 fillRect/strokeRect 那条分支）
+      squareRect(ctx, px - half, py - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE);
       ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.strokeStyle = 'rgba(15, 23, 42, .38)';
       ctx.lineWidth = 1.6;
-      roundRect(ctx, px - half, py - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
+      // 描边内收半个线宽：最外圈像素正好落在 PLAYER_SIZE 上 = 碰撞盒边界
+      squareRect(ctx, px - half + 0.8, py - half + 0.8, DC.PLAYER_SIZE - 1.6, DC.PLAYER_SIZE - 1.6);
       ctx.stroke();
       // 已到达：画个对勾
       if (p.state === 'arrived') {
@@ -885,26 +885,18 @@
       ctx.strokeStyle = 'rgba(15, 23, 42, .07)';
       for (var i = 0; i < w; i += 40) { ctx.beginPath(); ctx.moveTo(i + .5, 0); ctx.lineTo(i + .5, h); ctx.stroke(); }
       for (var j = 0; j < h; j += 40) { ctx.beginPath(); ctx.moveTo(0, j + .5); ctx.lineTo(w, j + .5); ctx.stroke(); }
-      // 巡逻的圆
+      // 巡逻的圆（和游戏里一样：实心平色，不发光不反光，半径用内核固定值）
       for (var k = 0; k < 3; k++) {
         var cx = 560 + k * 50;
         var cy = 48 + Math.sin(t * 1.6 + k * 1.1) * 26;
-        ctx.save();
-        ctx.shadowColor = 'rgba(231, 76, 60, .8)';
-        ctx.shadowBlur = 12;
         ctx.fillStyle = '#e74c3c';
-        ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
+        ctx.beginPath(); ctx.arc(cx, cy, DC.OBSTACLE_RADIUS + 4, 0, Math.PI * 2); ctx.fill();
       }
       squares.forEach(function (s, i) {
         var x = s.x + Math.sin(t * 0.9 + i * 0.7) * 26;
-        ctx.save();
-        ctx.shadowColor = s.c;
-        ctx.shadowBlur = 12;
         ctx.fillStyle = s.c;
-        roundRect(ctx, x - 16, s.y - 16, 32, 32, 6);
+        squareRect(ctx, x - DC.PLAYER_SIZE / 2, s.y - DC.PLAYER_SIZE / 2, DC.PLAYER_SIZE, DC.PLAYER_SIZE);
         ctx.fill();
-        ctx.restore();
       });
       requestAnimationFrame(frame2);
     }

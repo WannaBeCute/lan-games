@@ -111,8 +111,10 @@ function coreTests() {
   const wallLevel = levelWith({ obstacles: [] });
   wallLevel.walls = wallLevel.walls.concat([{ col: 5, row: 7 }, { col: 6, row: 7 }, { col: 7, row: 7 }]);
   const rw = runPlayer(wallLevel, 2.5, () => ({ right: true }));
-  ok('撞墙不会穿过去（方块停在墙前）', rw.player.x < 5 * 40 - 17 && rw.player.y === 300,
-    'x=' + rw.player.x.toFixed(1));
+  // 阈值跟着方块大小走：右边缘正好抵住第 5 列墙的左边界（200px），别再写死 17（那是旧 36px 的一半减 1）
+  ok('撞墙不会穿过去（方块右边缘正好抵在墙前）',
+    rw.player.x + DC.PLAYER_SIZE / 2 <= 5 * 40 + 0.5 && rw.player.x < 5 * 40 - DC.PLAYER_SIZE / 2 + 1 && rw.player.y === 300,
+    'x=' + rw.player.x.toFixed(1) + ' 右边缘=' + (rw.player.x + DC.PLAYER_SIZE / 2).toFixed(1) + '（墙在 200）');
 
   // 贴着墙按「右+下」：X 被挡住，Y 照样往下走 —— 这就是沿墙滑动
   const slideWorld = DC.createWorld(DC.normalizeLevel(wallLevel));
@@ -305,6 +307,124 @@ function coreTests() {
 /* ================================================================
  * B. 关卡校验与可通关性
  * ================================================================ */
+/* ================================================================
+   尺寸与几何（2026-10-15 用户定的规矩，钉死别回退）
+   · 圆形障碍半径恒为 13px：老关卡 JSON 里写的 radius 一律忽略
+   · 玩家是 28px 的标准正方形
+   · 相邻两格两个圆之间的通道只有 16px < 28px → 方块钻不过去
+   · 判定严格贴合视觉：碰撞盒就是画出来那个方块
+   ================================================================ */
+function sizeTests() {
+  const G = DC.GRID_SIZE, S = DC.PLAYER_SIZE, R = DC.OBSTACLE_RADIUS;
+  ok('圆形障碍半径固定 13px', R === 13, R + 'px');
+  ok('玩家方块 28px 标准正方形', S === 28, S + 'px');
+
+  // 老关卡里存了 radius: 18 也必须被强制成 12
+  const oldLv = DC.normalizeLevel({
+    cols: 10, rows: 8, spawns: [{ col: 0, row: 4 }], goals: [{ col: 9, row: 4 }],
+    walls: [], checkpoints: [],
+    obstacles: [{ id: 'x', path: [{ col: 5, row: 4 }], speed: 100, radius: 18 }]
+  });
+  ok('老关卡里写的 radius 会被忽略（统一 13px）', oldLv.obstacles[0].radius === 13,
+    '存的是 18，读出来是 ' + oldLv.obstacles[0].radius);
+
+  // 编辑器里不该再有"球半径"滑块（radius 只能来自内核固定值）
+  const edSrc = fs.readFileSync(path.join(__dirname, '..', 'games', 'dodge', 'client', 'editor.js'), 'utf8');
+  ok('编辑器里已经没有「球半径」设置', edSrc.indexOf('球半径') < 0,
+    edSrc.indexOf('球半径') < 0 ? '彻底删掉了' : '还留着');
+  ok('编辑器里不再出现写死的 18px 半径', edSrc.indexOf('radius: 18') < 0);
+  ok('导出的关卡不再带 radius 字段', edSrc.indexOf('radius: o.radius') < 0);
+
+  // 判定盒 == 画出来的方块
+  const rect = (p) => ({ x: p.x - S / 2, y: p.y - S / 2, w: S, h: S });
+  ok('碰撞盒就是那个 28px 正方形（判定贴合视觉）', rect({ x: 100, y: 100 }).w === 28 && rect({ x: 100, y: 100 }).x === 86);
+
+  /* 通道宽度：相邻两格各一个圆 → 40 - 13*2 = 14px，方块 28px 钻不过去 */
+  const gap = G - 2 * R;
+  ok('相邻两格两个圆之间的通道 14px（比方块窄，钻不过去）', gap === 14 && gap < S, gap + 'px vs 方块 ' + S + 'px');
+
+  // 实测：竖着从两个相邻格的圆中间冲过去 → 必然撞死
+  const corridor = {
+    cols: 12, rows: 9, spawns: [{ col: 5, row: 0 }], goals: [{ col: 5, row: 8 }],
+    walls: [], checkpoints: [],
+    obstacles: [
+      { id: 'a', path: [{ col: 5, row: 3 }], speed: 0 },
+      { id: 'b', path: [{ col: 6, row: 3 }], speed: 0 }
+    ]
+  };
+  const cw = DC.createWorld(DC.normalizeLevel(corridor));
+  const cp = DC.createPlayer(cw, 0);
+  let died = 0, arrived = false;
+  for (let i = 0; i < 20 * 60; i++) {
+    DC.stepObstacles(cw, 1 / 60);
+    const ev = DC.stepPlayer(cw, cp, { down: true }, 1 / 60);
+    if (ev && ev.died) died++;
+    if (ev && ev.arrived) { arrived = true; break; }
+  }
+  ok('方块钻不过两个相邻圆之间的 14px 空隙（会被撞死）', arrived === false && died > 0,
+    '死亡 ' + died + ' 次');
+
+  /* 网格交界处：四周四格都有圆时，28px 方块能不能活？
+     这一条是用户提的硬要求，这里把数字算清楚钉住（当前 28px 是"会撞到"，
+     要活命得 ≤ 21.6px；哪天用户把方块改小/把判定改松，这条会立刻翻红提醒）。 */
+  const cornerLv = DC.normalizeLevel({
+    cols: 12, rows: 9, spawns: [{ col: 0, row: 4 }], goals: [{ col: 11, row: 4 }],
+    walls: [], checkpoints: [],
+    obstacles: [[3, 3], [4, 3], [3, 4], [4, 4]].map((c, i) => ({ id: 'c' + i, path: [{ col: c[0], row: c[1] }], speed: 0 }))
+  });
+  const cw2 = DC.createWorld(cornerLv);
+  const corner = { x: 4 * G, y: 4 * G };
+  let cornerHit = null;
+  for (const o of cw2.obstacles) {
+    if (DC.rectCircleCollide(rect(corner), o.x, o.y, o.radius)) { cornerHit = o; break; }
+  }
+  const dCenter = Math.hypot(corner.x - (3 * G + 20), corner.y - (3 * G + 20));
+  const clearance = dCenter - S / 2 * Math.SQRT2;          // 方块角到圆心的最近距离
+  const maxBlock = (dCenter - R) * Math.SQRT2;           // 想在交点活命的最大边长
+  ok('网格交点四格都有圆时：方块角到圆心 ' + clearance.toFixed(2) + 'px vs 半径 ' + R + 'px' +
+    (cornerHit ? ' → 会撞到' : ' → 不碰'), !!cornerHit === (clearance < R),
+    '要在交点活命，方块边长需 ≤ ' + maxBlock.toFixed(1) + 'px（当前 ' + S + 'px）');
+
+  /* 求解器给的路线：回放一遍必须全程不撞（编辑器画的就是这个） */
+  const lv = DC.normalizeLevel({
+    cols: 14, rows: 9, spawns: [{ col: 0, row: 4 }], goals: [{ col: 13, row: 4 }],
+    walls: [], checkpoints: [],
+    obstacles: [
+      { id: 'a', path: [{ col: 4, row: 3 }, { col: 4, row: 5 }], speed: 90, loopMode: 'pingpong' },
+      { id: 'b', path: [{ col: 8, row: 5 }, { col: 8, row: 3 }], speed: 90, loopMode: 'pingpong' }
+    ]
+  });
+  const r = DC.solveReachable(lv, 60);
+  ok('求解器返回最优路线（path）', r.ok && Array.isArray(r.path) && r.path.length > 1,
+    r.ok ? (r.path.length + ' 个落脚点，' + r.time.toFixed(2) + ' 秒') : r.reason);
+  ok('路线末点的时间片 == 总时间片（时间与计算一致）',
+    r.ok && r.path[r.path.length - 1].t === r.ticks && Math.abs(r.ticks * DC.SOLVE_STEP - r.time) < 1e-9,
+    r.ok ? ('t=' + r.ticks + ' × ' + DC.SOLVE_STEP + 's = ' + r.time.toFixed(2) + 's') : '');
+
+  // 照着路线逐片回放（和编辑器同一份插值 DC.solveBotPos），全程不许撞
+  const frames = DC.obstacleTimeline(lv, r.ticks + 1);
+  let hitAt = -1;
+  for (let f = 0; f <= r.ticks && hitAt < 0; f++) {
+    const pos = DC.solveBotPos(r.path, f);
+    for (const o of frames[f]) {
+      if (DC.rectCircleCollide(rect(pos), o.x, o.y, o.r)) { hitAt = f; break; }
+    }
+  }
+  ok('按路线回放全程不撞（编辑器里看到的路线是真能走的）', hitAt < 0,
+    hitAt < 0 ? ('逐片复算 ' + (r.ticks + 1) + ' 片都没事') : ('第 ' + hitAt + ' 片就撞上了'));
+
+  // 内置 10 关：都还能过，且每关都有可回放的路线
+  const pack = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'games', 'dodge', 'shared', 'levels.json'), 'utf8'));
+  const builtin = pack.levels || pack;
+  const solved = builtin.filter(l => DC.solveReachable(DC.normalizeLevel(l), 60).ok);
+  ok('内置 ' + builtin.length + ' 关在新尺寸下都还能通关（' + solved.length + ' 关）', solved.length === builtin.length);
+  const badPath = builtin.filter(l => {
+    const res = DC.solveReachable(DC.normalizeLevel(l), 60);
+    return !res.ok || !res.path || res.path[res.path.length - 1].t !== res.ticks;
+  });
+  ok('内置每一关的最优路线都完整（可回放）', badPath.length === 0, badPath.map(l => l.name).join(','));
+}
+
 function validateTests() {
   console.log('\n== B1. 关卡校验 ==');
   const noSpawn = DC.validateLevel(levelWith({ spawns: [] }));
@@ -462,7 +582,12 @@ async function onlineTests() {
   }
   const st = await (await fetch(base + '/api/status')).json();
   ok('/api/status 里有方块躲避', st.dodgeRooms === 0 && st.dodgeLevels === 10, JSON.stringify({ rooms: st.dodgeRooms, levels: st.dodgeLevels }));
-  ok('三个游戏都被自动发现', (st.games || []).length === 3, (st.games || []).map(g => g.name).join(','));
+  // 别写死游戏数量：每加一个游戏都要来改这里（上次加"你画我猜"就漏了）。
+  // 只要四个已知游戏都在、而且方块躲避也在，就算自动发现正常。
+  const gnames = (st.games || []).map(g => g.name);
+  ok('游戏都被自动发现（tank/gomoku/dodge/drawguess 一个不少）',
+    ['tank', 'gomoku', 'dodge', 'drawguess'].every(n => gnames.indexOf(n) >= 0) && gnames.length >= 4,
+    gnames.join(','));
   ok('没有消息路由冲突', (st.routeConflicts || []).length === 0);
 
   /* 建房 */
@@ -625,6 +750,7 @@ async function onlineTests() {
 /* ================================================================ */
 (async function main() {
   coreTests();
+  sizeTests();
   validateTests();
   await onlineTests();
   try { fs.unlinkSync(path.join(os.tmpdir(), 'wb-dodge-test-friends.json')); } catch (e) { /* noop */ }

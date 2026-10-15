@@ -308,8 +308,7 @@
             }
           ],
           "speed": 80,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -619,8 +618,7 @@
             }
           ],
           "speed": 90,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -635,8 +633,7 @@
             }
           ],
           "speed": 90,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -1526,8 +1523,7 @@
             }
           ],
           "speed": 100,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -1542,8 +1538,7 @@
             }
           ],
           "speed": 130,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -1853,8 +1848,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -1869,8 +1863,7 @@
             }
           ],
           "speed": 100,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -2180,8 +2173,7 @@
             }
           ],
           "speed": 120,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -2196,8 +2188,7 @@
             }
           ],
           "speed": 130,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_3",
@@ -2212,8 +2203,7 @@
             }
           ],
           "speed": 95,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -2667,8 +2657,7 @@
             }
           ],
           "speed": 100,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -2683,8 +2672,7 @@
             }
           ],
           "speed": 115,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -2989,8 +2977,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -3005,8 +2992,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_3",
@@ -3021,8 +3007,7 @@
             }
           ],
           "speed": 105,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_4",
@@ -3037,8 +3022,7 @@
             }
           ],
           "speed": 105,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -3936,8 +3920,7 @@
             }
           ],
           "speed": 90,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -3952,8 +3935,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_3",
@@ -3968,8 +3950,7 @@
             }
           ],
           "speed": 130,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_4",
@@ -3984,8 +3965,7 @@
             }
           ],
           "speed": 150,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -4458,8 +4438,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -4474,8 +4453,7 @@
             }
           ],
           "speed": 120,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_3",
@@ -4490,8 +4468,7 @@
             }
           ],
           "speed": 130,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     },
@@ -4816,8 +4793,7 @@
             }
           ],
           "speed": 120,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_2",
@@ -4832,8 +4808,7 @@
             }
           ],
           "speed": 140,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_3",
@@ -4848,8 +4823,7 @@
             }
           ],
           "speed": 100,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_4",
@@ -4864,8 +4838,7 @@
             }
           ],
           "speed": 160,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_5",
@@ -4880,8 +4853,7 @@
             }
           ],
           "speed": 130,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         },
         {
           "id": "obstacle_6",
@@ -4896,8 +4868,7 @@
             }
           ],
           "speed": 110,
-          "loopMode": "pingpong",
-          "radius": 18
+          "loopMode": "pingpong"
         }
       ]
     }

@@ -113,6 +113,29 @@ window.WB = window.WB || {};
     saveOpenChats(Object.keys(this.chatWins));
   };
 
+  /**
+   * 让刚出现的这个孩子完整露出来。
+   * 停靠区是"贴底"的（bottom 固定、内容超出时只滚动），所以：
+   *   · 聊天小窗 —— 滚到底，保证刚打开的这个整块可见（不然点「聊天」看着像没反应）；
+   *   · 邀请弹窗 —— 最少滚动让它进视野（它插在最上面）。
+   */
+  FriendApp.prototype._revealDockChild = function (node) {
+    var dock = this.dock;
+    if (!dock || !node) return;
+    var run = function () {
+      if (!node.parentNode || !dock.parentNode) return;
+      var top = node.offsetTop;
+      var bottom = top + node.offsetHeight;
+      if (bottom - dock.scrollTop > dock.clientHeight) {
+        dock.scrollTop = bottom - dock.clientHeight;      // 在下面看不见 → 往下滚（新开的小窗走这条）
+      } else if (top < dock.scrollTop) {
+        dock.scrollTop = top;                            // 在上面看不见 → 往上滚（新弹窗走这条）
+      }
+    };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run);
+    else setTimeout(run, 0);
+  };
+
   /** 好友列表/未读有变化时，让左下角的聊天控件跟着刷新 */
   FriendApp.prototype._notifyChat = function () {
     if (WB.chat && WB.chat.refreshFromFriends) WB.chat.refreshFromFriends();
@@ -203,6 +226,14 @@ window.WB = window.WB || {};
     this.dock = el('div', 'wb-friends-dock');
     this.dock.id = 'wb-friends-dock';
     document.body.appendChild(this.dock);
+    // 视口一变（拉窗口、开/关 DevTools），停靠区高度跟着变：把最新的那个孩子重新露出来，
+    // 否则刚打开的小窗会"消失在屏幕外"，看起来还是"点了聊天没反应"
+    window.addEventListener('resize', function () {
+      var last = self.dock.lastElementChild;
+      if (!last) return;
+      var r = last.getBoundingClientRect(), d = self.dock.getBoundingClientRect();
+      if (r.bottom > d.bottom + 1 || r.top < d.top - 1) self._revealDockChild(last);
+    });
     this.renderBadge();
   };
 
@@ -236,6 +267,7 @@ window.WB = window.WB || {};
     this.pops.push(rec);
     while (this.pops.length > MAX_POPUPS) this.pops[0].close();
     this.dock.insertBefore(p, this.dock.firstChild);   // 新弹窗放在最上面
+    this._revealDockChild(p);                          // 上面被小窗顶出去了就滚回来
     return rec;
   };
 
@@ -646,6 +678,9 @@ window.WB = window.WB || {};
   FriendApp.prototype.openChat = function (ip) {
     var self = this;
     if (this.chatWins[ip]) {
+      // 窗口早就开着（比如刚打开的那个被挤到停靠区视野外）：先把它露出来再聚焦，
+      // 否则用户点「聊天」什么都看不到，会以为"窗口没弹出来"
+      this._revealDockChild(this.chatWins[ip].root);
       this.chatWins[ip].focus();
       return this.chatWins[ip];
     }
@@ -679,6 +714,7 @@ window.WB = window.WB || {};
 
     root.appendChild(hd); root.appendChild(bd); root.appendChild(ft);
     this.dock.appendChild(root);   // 聊天小窗固定在停靠区底部
+    this._revealDockChild(root);   // 并保证它整块可见（停靠区满了会滚动，不裁切）
 
     // 打字时按键不要漏到游戏里（坦克会把 W/方向键当油门）
     root.addEventListener('keydown', function (e) { e.stopPropagation(); });

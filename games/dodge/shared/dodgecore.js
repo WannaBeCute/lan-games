@@ -27,8 +27,8 @@
 
   /* ---------------- 常量 ---------------- */
   var GRID_SIZE = 40;          // 每格 40×40 像素
-  var PLAYER_SIZE = 36;        // 玩家方格边长（比格子略小，站得进去）
-  var OBSTACLE_RADIUS = 18;    // 圆形障碍半径（略小于半格 20）
+  var PLAYER_SIZE = 28;        // 玩家方块边长：标准正方形，明显小于格子
+  var OBSTACLE_RADIUS = 13;    // 圆形障碍半径（固定值，不给调）
   var PLAYER_SPEED = 160;      // 玩家速度（像素/秒）
   var DEATH_FREEZE = 0.45;     // 死亡后定格时间，给"被撞飞"的动画留点时间
   var RESPAWN_INVULN = 0.5;    // 复活后无敌时间，避免复活点边上被反复摩擦
@@ -235,7 +235,9 @@
         path: path,
         speed: clamp(Number(o && o.speed) || 100, SPEED_MIN, SPEED_MAX),
         loopMode: (o && o.loopMode === 'loop') ? 'loop' : 'pingpong',
-        radius: clamp(Number(o && o.radius) || OBSTACLE_RADIUS, 6, GRID_SIZE / 2 - 2)
+        // 半径是固定值：老关卡 JSON 里存的 radius 一律忽略，直接钉死成 OBSTACLE_RADIUS，
+        // 这样"看到的圆"和"判定用的圆"永远是同一个大小（编辑器里也早已删掉半径滑块）。
+        radius: OBSTACLE_RADIUS
       };
       // 圆周旋转：绕着 path[0] 这一格转圈（半径自己定），和巡逻路径二选一
       if (isFinite(orbitRadius) && orbitRadius > 0) {
@@ -712,7 +714,9 @@
   }
 
   /**
-   * 返回 { ok, time, ticks }：ok=true 表示存在一条通关路线，time 是到达用时（秒）。
+   * 返回 { ok, time, ticks, path }：ok=true 表示存在一条通关路线，time 是到达用时（秒）。
+   * path 是这条最优路线（按格子中心走的落脚点序列，每项带它到达的时间片 t），
+   * 编辑器「检查能否通关」的机器人回放就是照着它播的 —— 播完的用时必须等于 time。
    */
   function solveReachable(level, seconds) {
     level = level.cols ? level : normalizeLevel(level);
@@ -739,22 +743,40 @@
     }
 
     // BFS：(格子, 时间片)
+    // 记下来源，命中终点时就能把整条最优路线拼出来 —— 编辑器要照着它回放一遍。
     var startKey = startCell.col + ',' + startCell.row + '@0';
     var seen = {};
+    var from = {};                 // key -> 上一步的 key（null = 起点）
     seen[startKey] = 1;
+    from[startKey] = null;
     var queue = [{ col: startCell.col, row: startCell.row, t: 0 }];
     var head = 0;
+    function keyOf(st) { return st.col + ',' + st.row + '@' + st.t; }
+    function tracePath(endKey) {
+      var out = [], k = endKey;
+      while (k) {
+        var parts = k.split('@');
+        out.push({ col: parseInt(parts[0].split(',')[0], 10), row: parseInt(parts[0].split(',')[1], 10), t: parseInt(parts[1], 10) });
+        k = from[k];
+      }
+      return out.reverse();
+    }
     while (head < queue.length) {
       var cur = queue[head++];
-      if (goals[cellKey(cur.col, cur.row)]) return { ok: true, time: cur.t * SOLVE_STEP, ticks: cur.t };
+      if (goals[cellKey(cur.col, cur.row)]) {
+        return { ok: true, time: cur.t * SOLVE_STEP, ticks: cur.t, path: tracePath(keyOf(cur)) };
+      }
 
       // 原地等一个时间片
       var nt = cur.t + 1;
       if (nt < ticks) {
-        var k = cur.col + ',' + cur.row + '@' + nt;
+        var k = keyOf({ col: cur.col, row: cur.row, t: nt });
         if (!seen[k]) {
           var pc = gridCenter(cur.col, cur.row);
-          if (safeAt(nt, pc.x, pc.y)) { seen[k] = 1; queue.push({ col: cur.col, row: cur.row, t: nt }); }
+          if (safeAt(nt, pc.x, pc.y)) {
+            seen[k] = 1; from[k] = keyOf(cur);
+            queue.push({ col: cur.col, row: cur.row, t: nt });
+          }
         }
       }
       // 走到相邻格子
@@ -764,7 +786,7 @@
         if (isWallAt(level, nc, nr)) continue;
         var tick = cur.t + SOLVE_MOVE_TICKS;
         if (tick >= ticks) continue;
-        var key = nc + ',' + nr + '@' + tick;
+        var key = keyOf({ col: nc, row: nr, t: tick });
         if (seen[key]) continue;
         var a = gridCenter(cur.col, cur.row), b = gridCenter(nc, nr);
         var free = true;
@@ -773,11 +795,34 @@
           if (!safeAt(cur.t + s, a.x + (b.x - a.x) * r, a.y + (b.y - a.y) * r)) free = false;
         }
         if (!free) continue;
-        seen[key] = 1;
+        seen[key] = 1; from[key] = keyOf(cur);
         queue.push({ col: nc, row: nr, t: tick });
       }
     }
     return { ok: false, time: 0, reason: '在 ' + limit + ' 秒内找不到安全路线' };
+  }
+
+  /**
+   * 求解路线上「第 f 个时间片」（f 可以是小数）机器人在哪。
+   * 编辑器画回放、自检离线复算，都走这一个函数 —— 只有一份插值实现，
+   * "回放里看到的" 才真的等于 "求解时算的"。
+   * 相邻两个落脚点之间差 SOLVE_MOVE_TICKS 片（走一格），差 1 表示原地等一拍。
+   */
+  function solveBotPos(path, f) {
+    if (!path || !path.length) return null;
+    if (f <= path[0].t) return gridCenter(path[0].col, path[0].row);
+    for (var i = 1; i < path.length; i++) {
+      var a = path[i - 1], b = path[i];
+      if (f > b.t) continue;
+      var pa = gridCenter(a.col, a.row);
+      var span = b.t - a.t;
+      if (span <= 1) return pa;                       // 原地等一拍
+      var pb = gridCenter(b.col, b.row);
+      var k = (f - a.t) / span;
+      return { x: pa.x + (pb.x - pa.x) * k, y: pa.y + (pb.y - pa.y) * k };
+    }
+    var last = path[path.length - 1];
+    return gridCenter(last.col, last.row);
   }
 
   /* ================= 格子连通性（编辑器用：终点是不是被墙彻底堵死） ================= */
@@ -846,6 +891,7 @@
     inSafeZone: inSafeZone, orbitCenter: orbitCenter,
     /* 关卡可通关性（编辑器与自检共用） */
     solveReachable: solveReachable, reachable: reachable, obstacleTimeline: obstacleTimeline,
-    SOLVE_STEP: SOLVE_STEP
+    solveBotPos: solveBotPos,
+    SOLVE_STEP: SOLVE_STEP, SOLVE_MOVE_TICKS: SOLVE_MOVE_TICKS
   };
 });

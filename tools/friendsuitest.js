@@ -252,9 +252,13 @@ function peer(port) {
       "i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1;})()");
     const chatBack = await peerClient.wait('friends.chat');
     ok('对方收到回车发出的消息', chatBack.text === '马上来' && chatBack.self === false, chatBack.text);
-    ok('聊天小窗在左下角且不宽', await evalJs(
+    // 小窗依旧贴左下角、不宽；但聊天控件也住在那个角，所以小窗会**往右让开控件**，
+    // 不然 302×384 的小窗会把 296×346 的控件（连同页签）整个盖住（见 chat.js 的 syncDockSide）
+    ok('聊天小窗贴着左下角、不宽，且不会被聊天控件盖住', await evalJs(
       "(function(){var r=document.querySelector('.fb-chat').getBoundingClientRect();" +
-      "return r.left < 40 && r.bottom > window.innerHeight - 40 && r.width <= 320;})()"));
+      "var c=document.getElementById('wb-chat');var cr=c?c.getBoundingClientRect():null;" +
+      "var clear=!cr||c.classList.contains('gone')||r.right<=cr.left+1||r.left>=cr.right-1||r.bottom<=cr.top+1||r.top>=cr.bottom-1;" +
+      "return r.bottom > window.innerHeight - 40 && r.width <= 320 && clear;})()"));
     await shot('friends-chat');
 
     /* ============ 5. 组队邀请：免邀请码直达坦克房间 ============ */

@@ -257,12 +257,30 @@ body { padding-bottom: 30px; }
   pointer-events: none; z-index: 8;
 }
 
-/* 聊天区：跟左栏等高，日志区自己滚 */
-.chatPanel { display: flex; flex-direction: column; min-height: 220px; min-width: 0; }
+/* 聊天区：日志区自己有上限高度，超了就自己滚。
+   ⚠️ 两处都要写，缺一不可：
+   ① `.chatPanel` 的 `min-height: 0` —— 它是 .playRight 里的**网格项**，
+      而网格项默认 `min-height: auto`，不写这行聊天一多就把整列撑高。
+   ② `.chatLog` 的 `max-height` —— 这才是真正卡住高度的那只手。页面容器
+      （.wrap）没有确定高度，网格的 `1fr` 在这种容器里等于 auto，
+      光靠 `flex:1` 是压不住的（实测灌 60 条能长到 3000px）。
+   上限取 30vh / 320px：实测右栏扣掉信息栏和积分栏后自然余量约 26vh，
+      给到 30vh 既能多显示几行，又不会把整页撑出滚动条。 */
+.chatPanel { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .chatLog {
-  flex: 1; min-height: 120px; overflow-y: auto; overscroll-behavior: contain;
+  flex: 1 1 auto; min-height: 72px; max-height: min(30vh, 320px);
+  overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; gap: 6px; padding: 6px 2px; font-size: 14px;
+  /* 滚动条一直看得见 —— 否则用户不知道下面还有发言 */
+  scrollbar-width: thin; scrollbar-color: var(--line2) transparent;
 }
+.chatLog::-webkit-scrollbar { width: 10px; }
+.chatLog::-webkit-scrollbar-track { background: rgba(127, 127, 127, .12); border-radius: 8px; }
+.chatLog::-webkit-scrollbar-thumb {
+  background: var(--line2); border-radius: 8px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+.chatLog::-webkit-scrollbar-thumb:hover { background: var(--dim2); background-clip: content-box; }
 /* 折叠：只留最近 3 条，输入框还在，随时能说话 */
 .chatPanel.folded .chatLog { min-height: 0; max-height: 78px; flex: 0 0 auto; }
 .chatPanel.folded .chatLog .line:not(:nth-last-child(-n+3)) { display: none; }

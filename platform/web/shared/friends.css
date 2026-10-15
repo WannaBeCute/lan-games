@@ -62,16 +62,29 @@
 }
 .fb-team-menu button:hover { background: rgba(76, 141, 255, .18); }
 
-/* ---------- 左下角停靠区：邀请弹窗 + 聊天小窗 ---------- */
+/* ---------- 左下角停靠区：邀请弹窗 + 聊天小窗 ----------
+   贴底摆放（bottom 固定），内容从下往上长。内容比视口还高时**只滚动、不裁切**：
+   以前是 overflow: hidden，小窗一多，最后追加的那个（也就是刚点「聊天」打开的那个）
+   会被裁到屏幕外，看着就像"窗口没弹出来"。打开后 JS 会把它滚进视野
+   （见 friends.js 的 _revealDockChild）。
+
+   ⚠️ z-index 必须是 60，**不能比聊天控件（chat.css 的 .wb-chat = 70）高**。
+      这个停靠区和聊天控件住在同一个角（都在左下角），控件上还有「本局 / 好友」
+      两个页签 —— 一旦停靠区压过控件，小窗/邀请弹窗就会把页签整个盖住，
+      控件内部把页签 z-index 调多高都白搭（那只在控件自己这层里有效）。
+      现在的层次，从下到上：顶栏 40 < 停靠区 60 < 聊天控件 70 < 好友面板 120
+      < 通用弹窗 / gomoku 提问遮罩 150 < toast 200。 */
 .wb-friends-dock {
-  position: fixed; left: 14px; bottom: 14px; z-index: 150;
+  position: fixed; left: 14px; bottom: 14px; z-index: 60;
   display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
-  pointer-events: none; max-height: calc(100vh - 28px); overflow: hidden;
+  pointer-events: none; max-height: calc(100vh - 28px);
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
 }
 .wb-friends-dock > * { pointer-events: auto; }
 
-/* 邀请 / 消息弹窗 */
+/* 邀请 / 消息弹窗：按自己的高度摆，不参与压缩 */
 .fb-pop {
+  flex: 0 0 auto;
   width: 290px; padding: 13px 15px;
   background: linear-gradient(180deg, #1a2231, #131922);
   border: 1px solid var(--line2); border-radius: 14px; box-shadow: var(--shadow);
@@ -91,13 +104,24 @@
 .fb-pop .x:hover { color: var(--text); }
 .fb-pop { position: relative; }
 
-/* 聊天小窗 */
+/* 聊天小窗：高度写死、绝不参与压缩（以前会被 flex 压成一条，看着像"没打开"）；
+   太高时（矮窗口）最多到视口高度，标题和输入框始终在。 */
 .fb-chat {
-  width: 302px; height: 384px; display: flex; flex-direction: column;
+  width: 302px; height: 384px; flex: 0 0 auto; max-height: calc(100vh - 28px);
+  display: flex; flex-direction: column;
   background: linear-gradient(180deg, #1a2231, #131922);
   border: 1px solid var(--line2); border-radius: 14px; box-shadow: var(--shadow);
   overflow: hidden; animation: fbIn .18s ease;
 }
+/* 聊天控件也贴在左下角时（它俩本来就住同一角），**小窗**往右让开，别糊在控件上。
+   注意只让小窗、不让 .fb-pop（邀请弹窗）：
+   停靠区是"贴底往上长"的，弹窗总是排在所有小窗**上面**，本来就在控件上方那一段，
+   压根压不到控件的页签；硬让开反而把弹窗推离左边缘（弹窗就该贴左下角，别挡画面）。
+   让开多少由 chat.js 的 syncDockSide() 按**控件实际位置**算好，塞进 --wb-dock-shift：
+   让到控件右边 8px，同时保证小窗自己不出界（右边留 14px，放不下就让得少一点）。
+   只在控件真的压在这块上时才加 wc-dock-side（body 类由同一个函数维护）。
+   注：真正保证"点得到"的是 z-index（停靠区 60 < 控件 70），这条只是观感修正。 */
+body.wc-dock-side .wb-friends-dock .fb-chat { margin-left: var(--wb-dock-shift, 0px); }
 .fb-chat .hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
 .fb-chat .hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim2); flex: none; }
 .fb-chat .hd .dot.on { background: var(--ok); box-shadow: 0 0 7px rgba(47, 211, 155, .7); }

@@ -111,7 +111,8 @@
       var o = E.level.obstacles[i];
       var pos = obstacleRenderPos(o);
       var dx = x - pos.x, dy = y - pos.y;
-      if (dx * dx + dy * dy <= (o.radius + 4) * (o.radius + 4)) return o;
+      var rr = DC.OBSTACLE_RADIUS + 4;          // 半径是内核固定值，不从障碍数据里读
+      if (dx * dx + dy * dy <= rr * rr) return o;
     }
     return null;
   }
@@ -132,8 +133,8 @@
       id: uniqueObstacleId(),
       path: [{ col: col, row: row }],
       speed: 100,
-      loopMode: 'pingpong',
-      radius: 18
+      loopMode: 'pingpong'
+      // 不存 radius：半径是内核里的固定值（DC.OBSTACLE_RADIUS），存进关卡只会变成第二份真相
     };
   }
 
@@ -147,6 +148,7 @@
   }
   function restoreFrom(json) {
     var keepId = E.selected ? E.selected.id : null;
+    stopSolve(true);                 // 关卡都换了，别让上一关的机器人接着跑
     E.level = JSON.parse(json);
     E.selected = null;
     if (keepId) {
@@ -209,6 +211,7 @@
   window.addEventListener('resize', fitEditor);
 
   function roundRect(ctx, x, y, w, h, r) {
+    if (!r) { ctx.beginPath(); ctx.rect(x, y, w, h); return; }   // 半径 0 = 直角
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -217,18 +220,20 @@
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
+  /** 永远是直角的方块（玩家）：标准正方形，不带圆角 */
+  function squareRect(ctx, x, y, w, h) { ctx.beginPath(); ctx.rect(x, y, w, h); }
 
   function obstacleRenderPos(o) {
-    // 测试游玩 / 预览运动：运动中的障碍位置都按「同一顺序、下标对应」取（id 可能撞车，不能拿它对号）
-    if (E.test && E.test.world) {
+    // 测试游玩 / 预览运动 / 最优解回放：运动中的障碍位置都按「同一顺序、下标对应」取（id 可能撞车，不能拿它对号）
+    // 回放**放完之后**就别再拿它那套障碍位置了：机器人和路线留着当结果，
+    // 障碍回到各自的静止位置（否则编辑时会看到一堆"停在终点"的圆，很误导）
+    var live = (E.test && E.test.world) ? E.test.world
+      : (E.solve && !E.solve.done && E.solve.world) ? E.solve.world
+        : (E.preview && E.previewWorld) ? E.previewWorld : null;
+    if (live) {
       var ti = E.level.obstacles.indexOf(o);
-      var to = E.test.world.obstacles[ti >= 0 ? ti : 0];
+      var to = live.obstacles[ti >= 0 ? ti : 0];
       if (to) return { x: to.x, y: to.y };
-    }
-    if (E.preview && E.previewWorld) {
-      var idx = E.level.obstacles.indexOf(o);
-      var po = E.previewWorld.obstacles[idx >= 0 ? idx : 0];
-      if (po) return { x: po.x, y: po.y };
     }
     if (o.orbit) {
       var cen = DC.gridCenter(o.path[0].col, o.path[0].row);
@@ -347,20 +352,17 @@
       }
       // 圆本身
       var pos = obstacleRenderPos(o);
-      ctx.save();
-      if (isSel) { ctx.shadowColor = 'rgba(37,99,235,.85)'; ctx.shadowBlur = 18; }
-      else { ctx.shadowColor = 'rgba(231,76,60,.55)'; ctx.shadowBlur = 10; }
+      // 不发光、不反光：编辑器里看到的圆 = 游戏里看到的圆 = 判定用的圆（半径都是内核固定值）
       ctx.fillStyle = '#e74c3c';
-      ctx.beginPath(); ctx.arc(pos.x, pos.y, o.radius, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, DC.OBSTACLE_RADIUS, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = isSel ? '#2563eb' : '#b03a2e';
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(pos.x, pos.y, o.radius - 1, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, DC.OBSTACLE_RADIUS - 1, 0, Math.PI * 2); ctx.stroke();
       if (isSel) {
         ctx.strokeStyle = 'rgba(37,99,235,.55)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([4, 4]);
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, o.radius + 7, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, DC.OBSTACLE_RADIUS + 7, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
       }
     });
@@ -372,15 +374,12 @@
       ctx.save();
       if (tp.state === 'dead') ctx.globalAlpha = 0.4;
       else if (tp.invuln > 0 && Math.floor(tp.invuln * 14) % 2 === 0) ctx.globalAlpha = 0.35;
-      ctx.shadowColor = tp.color;
-      ctx.shadowBlur = tp.state === 'playing' ? 12 : 0;
       ctx.fillStyle = tp.color;
-      roundRect(ctx, tp.x - half, tp.y - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
+      squareRect(ctx, tp.x - half, tp.y - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE);
       ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.strokeStyle = 'rgba(15, 23, 42, .38)';
       ctx.lineWidth = 1.6;
-      roundRect(ctx, tp.x - half, tp.y - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE, 7);
+      squareRect(ctx, tp.x - half + 0.8, tp.y - half + 0.8, DC.PLAYER_SIZE - 1.6, DC.PLAYER_SIZE - 1.6);
       ctx.stroke();
       if (tp.state === 'arrived') {
         ctx.strokeStyle = 'rgba(255, 255, 255, .95)';
@@ -392,6 +391,9 @@
       ctx.restore();
     }
 
+    // 最优解回放：机器人沿求解器给的落脚点走，画出走过的路线 + 当前所在位置
+    if (E.solve) drawSolveBot(ctx);
+
     // 选中的障碍（可能框选了好几个）都套一圈高亮
     E.sel.forEach(function (u) {
       if (u.kind !== 'obstacle') return;
@@ -402,7 +404,7 @@
         ctx.strokeStyle = 'rgba(37, 99, 235, .9)';
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 4]);
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, o.radius + 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, DC.OBSTACLE_RADIUS + 6, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
       });
     });
@@ -984,7 +986,7 @@
       }
       var p0 = document.createElement('p');
       p0.className = 'dim small';
-      p0.textContent = '选中一个圆形障碍，这里可以调移动方式（路径巡逻 / 圆周旋转）、速度、半径与路径点；选中墙或设施区域时这里会显示它的信息。';
+      p0.textContent = '选中一个圆形障碍，这里可以调移动方式（路径巡逻 / 圆周旋转）、速度与路径点（半径固定，不给调）；选中墙或设施区域时这里会显示它的信息。';
       box.appendChild(p0);
       return;
     }
@@ -1102,26 +1104,8 @@
       row('旋转方向', dir);
       dir.onchange = function () { pushHistory(); o.orbit.cw = dir.value === 'cw'; draw(); };
 
-      var r2 = document.createElement('input');
-      r2.type = 'range'; r2.min = '6'; r2.max = '18'; r2.step = '1'; r2.value = String(o.radius);
-      var r2Row = row('球半径', r2);
-      var r2Val = document.createElement('span');
-      r2Val.className = 'val';
-      r2Val.textContent = o.radius + ' px';
-      r2Row.appendChild(r2Val);
-      editableVal(r2Val, {
-        min: 6, max: 18, step: 1,
-        get: function () { return o.radius; },
-        set: function (v) { o.radius = v; }
-      });
-      var r2Pushed = false;
-      r2.oninput = function () {
-        if (!r2Pushed) { pushHistory(); r2Pushed = true; }
-        o.radius = parseInt(r2.value, 10);
-        r2Val.textContent = o.radius + ' px';
-        draw();
-      };
-
+      // 圆的半径是内核固定值（DC.OBSTACLE_RADIUS），这里刻意不给滑块：
+      // 半径一变，缝隙、判定、可通关性全都跟着变，编辑器里调它只会存出"看着能过、其实过不去"的关卡。
       var hintO = document.createElement('p');
       hintO.className = 'dim small';
       hintO.textContent = '圆心只是轨迹锚点，不占格子：可以放在出生点 / 复活点 / 终点或任何地方（选中后按住圆本体拖动即可搬家）。' +
@@ -1138,26 +1122,7 @@
       row('巡逻', loop);
       loop.onchange = function () { pushHistory(); o.loopMode = loop.value; draw(); };
 
-      var radius = document.createElement('input');
-      radius.type = 'range'; radius.min = '6'; radius.max = '18'; radius.step = '1'; radius.value = String(o.radius);
-      var radiusRow = row('球半径', radius);
-      var radiusVal = document.createElement('span');
-      radiusVal.className = 'val';
-      radiusVal.textContent = o.radius + ' px';
-      radiusRow.appendChild(radiusVal);
-      editableVal(radiusVal, {
-        min: 6, max: 18, step: 1,
-        get: function () { return o.radius; },
-        set: function (v) { o.radius = v; }
-      });
-      var radiusPushed = false;
-      radius.oninput = function () {
-        if (!radiusPushed) { pushHistory(); radiusPushed = true; }
-        o.radius = parseInt(radius.value, 10);
-        radiusVal.textContent = o.radius + ' px';
-        draw();
-      };
-
+      // 半径固定，没有可调项（原因同圆周障碍那段）
       var hint = document.createElement('p');
       hint.className = 'dim small';
       hint.textContent = o.path.length === 1
@@ -1293,8 +1258,8 @@
           id: oid,
           path: o.path.map(function (p) { return { col: p.col, row: p.row }; }),
           speed: o.speed,
-          loopMode: o.loopMode,
-          radius: o.radius
+          loopMode: o.loopMode
+          // 不导出 radius：半径是内核固定值，导出去只会变成第二份真相（读回来也会被忽略）
         };
         if (o.orbit) out.orbit = { radius: o.orbit.radius, cw: o.orbit.cw !== false, angle: o.orbit.angle || 0 };
         return out;
@@ -1328,13 +1293,14 @@
     lv.id = raw.id || Date.now();
     lv.name = raw.name || lv.name;
     lv.hint = raw.hint || '';
+    stopSolve(true);
     E.level = {
       version: 1, id: lv.id, name: lv.name, hint: lv.hint, difficulty: lv.difficulty,
       cols: lv.cols, rows: lv.rows,
       spawns: lv.spawns.slice(), checkpoints: lv.checkpoints.slice(), goals: lv.goals.slice(),
       walls: lv.walls.slice(),
       obstacles: lv.obstacles.map(function (o) {
-        var item = { id: o.id, path: o.path.slice(), speed: o.speed, loopMode: o.loopMode, radius: o.radius };
+        var item = { id: o.id, path: o.path.slice(), speed: o.speed, loopMode: o.loopMode };
         if (o.orbit) {
           item.orbit = { radius: o.orbit.radius, cw: o.orbit.cw !== false, angle: o.orbit.angle || 0 };
           item.centerSnap = o.centerSnap === 'cross' ? 'cross' : 'cell';
@@ -1355,10 +1321,110 @@
     WB.ui.toast('已载入关卡：' + E.level.name, 'ok');
   }
 
+  /* ================= 最优解回放（检查能否通关 → 机器人走一遍） ================= */
+  /**
+   * 时间必须和求解器算出来的一致，所以这里**不用挂钟**计时，而是数时间片：
+   * 每过一个 SOLVE_STEP（62.5ms）就把障碍推进一格时间片 —— 和内核里
+   * obstacleTimeline() 的推进方式一模一样，机器人脚下的位置也就和求解时看到的一致。
+   * 播完的总时间 = ticks × SOLVE_STEP = solveReachable().time。
+   */
+  function startSolve(res) {
+    if (!res || !res.ok || !res.path || !res.path.length) return;
+    stopSolve(true);
+    if (E.preview) stopPreview();
+    if (E.test) stopTest();
+    E.solve = {
+      world: DC.createWorld(DC.normalizeLevel(exportLevel())),
+      path: res.path,
+      ticks: res.ticks,
+      time: res.time,
+      tick: 0,
+      acc: 0,
+      raf: 0,
+      last: 0,
+      done: false
+    };
+    $('btnCheck').textContent = '⏹ 停止回放';
+    var stepMs = DC.SOLVE_STEP * 1000;
+    function tickFn(ts) {
+      if (!E.solve) return;
+      if (!E.solve.last) E.solve.last = ts;
+      E.solve.acc += Math.min(250, ts - E.solve.last);   // 切标签页回来别一下跳几百片
+      E.solve.last = ts;
+      while (E.solve.acc >= stepMs && E.solve.tick < E.solve.ticks) {
+        E.solve.acc -= stepMs;
+        E.solve.tick++;
+        DC.stepObstacles(E.solve.world, DC.SOLVE_STEP);
+      }
+      if (E.solve.tick >= E.solve.ticks) {
+        E.solve.tick = E.solve.ticks;
+        E.solve.done = true;
+        draw();
+        setStatus('✔ 机器人按最优解走完了：用时 ' + (E.solve.tick * DC.SOLVE_STEP).toFixed(2) +
+          ' 秒（与计算结果一致）', 'ok');
+        $('btnCheck').textContent = '🔍 检查能否通关';
+        E.solve.raf = 0;
+        return;
+      }
+      draw();
+      setStatus('回放中… ' + (E.solve.tick * DC.SOLVE_STEP).toFixed(2) + ' / ' +
+        E.solve.time.toFixed(2) + ' 秒（第 ' + (E.solve.tick + 1) + ' / ' + (E.solve.ticks + 1) + ' 片）');
+      E.solve.raf = requestAnimationFrame(tickFn);
+    }
+    E.solve.raf = requestAnimationFrame(tickFn);
+    draw();
+  }
+
+  function stopSolve(silent) {
+    if (E.solve && E.solve.raf) cancelAnimationFrame(E.solve.raf);
+    var had = !!E.solve;
+    E.solve = null;
+    if (had && !silent) {
+      $('btnCheck').textContent = '🔍 检查能否通关';
+      draw();
+    }
+  }
+
+  function drawSolveBot(ctx) {
+    var sp = E.solve;
+    if (!sp || !sp.path.length) return;
+    var f = sp.tick + Math.min(1, sp.acc / (DC.SOLVE_STEP * 1000));
+    // 走过的路线
+    ctx.save();
+    ctx.strokeStyle = 'rgba(76,141,255,.45)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    sp.path.forEach(function (pt, i) {
+      var c = DC.gridCenter(pt.col, pt.row);
+      if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+    // 机器人本体（和游戏里一样的直角方块，不发光）
+    var pos = DC.solveBotPos(sp.path, f);   // 和自检共用内核里那一份插值
+    var half = DC.PLAYER_SIZE / 2;
+    ctx.save();
+    ctx.fillStyle = '#4c8dff';
+    squareRect(ctx, pos.x - half, pos.y - half, DC.PLAYER_SIZE, DC.PLAYER_SIZE);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,.45)';
+    ctx.lineWidth = 1.6;
+    squareRect(ctx, pos.x - half + 0.8, pos.y - half + 0.8, DC.PLAYER_SIZE - 1.6, DC.PLAYER_SIZE - 1.6);
+    ctx.stroke();
+    // 头上标着当前时间片
+    ctx.fillStyle = '#1d4ed8';
+    ctx.font = 'bold 11px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText((f * DC.SOLVE_STEP).toFixed(2) + 's', pos.x, pos.y - half - 6);
+    ctx.restore();
+  }
+
   /* ================= 预览 ================= */
   var previewRaf = 0;
   function startPreview() {
     if (!E.level) { WB.ui.toast('先创建关卡', 'err'); return; }
+    stopSolve(true);
     E.preview = true;
     E.previewWorld = DC.createWorld(DC.normalizeLevel(exportLevel()));
     E.sel = [];
@@ -1380,6 +1446,7 @@
   }
   function stopPreview() {
     if (E.test) stopTest();
+    if (E.solve) stopSolve(true);
     if (!E.preview) return;
     E.preview = false;
     E.previewWorld = null;
@@ -1395,6 +1462,7 @@
   var testKeys = {};
   function startTest() {
     if (!E.level) { WB.ui.toast('先创建关卡', 'err'); return; }
+    stopSolve(true);
     var v = DC.validateLevel(E.level);
     if (!v.ok) { WB.ui.toast('先修好校验问题再测试：' + v.errors[0], 'err'); WB.audio.play('error'); return; }
     stopPreview();
@@ -1577,6 +1645,8 @@
     $('btnSave').onclick = doSave;
 
     $('btnCheck').onclick = function () {
+      // 只有"正在放"时再点才是停止；放完了再点是重新算一遍 + 重播
+      if (E.solve && !E.solve.done) { stopSolve(); setStatus('已停止回放'); return; }
       if (!E.level) { WB.ui.toast('先创建关卡', 'err'); return; }
       renderIssues();
       var v = DC.validateLevel(E.level);
@@ -1584,8 +1654,13 @@
       setStatus('正在推算…（时间展开搜索）');
       setTimeout(function () {
         var r = DC.solveReachable(DC.normalizeLevel(exportLevel()), 60);
-        if (r.ok) setStatus('✔ 这一关能通关：理论最快约 ' + r.time.toFixed(1) + ' 秒（不考虑玩家失误）', 'ok');
-        else setStatus('✖ 这一关过不去：' + (r.reason || '找不到安全路线'), 'err');
+        if (r.ok) {
+          startSolve(r);      // 画布上直接走一遍给你看，走完的用时必须等于 r.time
+          setStatus('✔ 这一关能通关：理论最快约 ' + r.time.toFixed(2) + ' 秒 —— 正在按最优解回放', 'ok');
+        } else {
+          stopSolve(true);
+          setStatus('✖ 这一关过不去：' + (r.reason || '找不到安全路线'), 'err');
+        }
       }, 30);
     };
 

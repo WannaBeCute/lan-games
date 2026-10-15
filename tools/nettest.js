@@ -251,76 +251,116 @@ async function settle(ms) { await sleep(ms || 220); }
   a.send({ t: 'tank.input', fire: false });
   ok('服务端强制子弹上限 5', maxMine <= 5, '峰值 ' + maxMine + ' 发');
 
-  // 草丛隐身：站到树丛格里，对方就看不到（自己仍然收得到）
-  const tilesBuf = Buffer.from(ra.tiles, 'base64');
-  const TILEW = ra.cols;
+  // ⚠️ 下面两段（草丛遮挡 / 子弹穿草）都必须按**当前这一局**的地图算摆位坐标。
+  //   摆位是"地图下标 → 像素"，用错图等于把坦克传到墙里，子弹全打空，
+  //   症状是"地图变更里找不到目标格"——随机红，约 1/5 概率。
+  //   为什么不能沿用开局的 ra：本测试用 WB_ROUND_LIMIT=6 把单局压到 6 秒，
+  //   走到这儿时第 1 局通常早打完，而 _startRound 每局都重新随机 seed 换一张全新地图。
+  //   （探针实测：此刻已是第 2 局，target 在旧图是草丛(4)、在新图是钢板(2)。）
+  //
+  // 判"正在打"不能只看快照字段：局间（intermission）服务端 broadcast 直接 return，
+  // 一条新快照都不发，这时 last('tank.state') 读到的是上一局的残留消息，
+  // freeze=0、time>0 全都成立。必须靠"最近 1.5 秒内确实收到过新快照"来判断。
+  a.lastStateAt = 0;
+  (a.handlers['tank.state'] = a.handlers['tank.state'] || []).push(() => { a.lastStateAt = Date.now(); });
+  /** 等一局"刚开始不久、正在打"的对局：time<2 给后面"摆位 + 两发"留 4 秒余量 */
+  const freshRound = async () => {
+    for (let i = 0; i < 150; i++) {
+      await sleep(300);
+      const r = a.last('tank.round');
+      const s = a.last('tank.state');
+      if (r && s && s.freeze <= 0 && s.time < 2 && Date.now() - a.lastStateAt < 1500) return r;
+    }
+    return null;
+  };
+  /** 这一轮摆位用的图还在用吗？中途换了局就得作废重来 */
+  const stillSameRound = (rnd) =>
+    (a.last('tank.round') || {}).index === rnd.index && Date.now() - a.lastStateAt < 1500;
   /** 该格四周（含自己）没有砖/钢/水 —— 不然坦克站上去会被挤出来 */
-  const standable = (idx) => {
-    const c = idx % TILEW, r = Math.floor(idx / TILEW);
-    if (c < 1 || r < 1 || c >= ra.cols - 1 || r >= ra.rows - 1) return false;
+  const standableIn = (tiles, rnd, idx) => {
+    const c = idx % rnd.cols, r = Math.floor(idx / rnd.cols);
+    if (c < 1 || r < 1 || c >= rnd.cols - 1 || r >= rnd.rows - 1) return false;
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const t = tilesBuf[(r + dy) * TILEW + (c + dx)];
+        const t = tiles[(r + dy) * rnd.cols + (c + dx)];
         if (t === 1 || t === 2 || t === 3) return false;
       }
     }
     return true;
   };
-  let bushIdx = -1;
-  for (let i = 0; i < tilesBuf.length; i++) {
-    if (tilesBuf[i] === 4 && standable(i)) { bushIdx = i; break; }
-  }
-  if (bushIdx < 0) {
-    ok('地图里能找到树丛格', false, '整张图没有树丛');
-  } else {
-    const TILE = 32;
-    const bc = bushIdx % ra.cols, br = Math.floor(bushIdx / ra.cols);
-    a.send({ t: 'tank.teleport', x: bc * TILE + TILE / 2, y: br * TILE + TILE / 2 });
-    await sleep(500);
-    const seenA = b.last('tank.state').tks.some(t => t[0] === 1000 + ha.id);
-    const selfA = a.last('tank.state').tks.some(t => t[0] === 1000 + ha.id);
-    // 草丛是"正常遮挡"（草画在坦克上面），不是把坦克藏起来：
-    // 数据照常下发，客户端靠草丛图形盖住它，并且草丛里不画头顶名字
-    ok('躲进草丛后坦克仍然正常同步（草丛是遮挡不是隐身）', seenA, '对手快照里' + (seenA ? '有' : '没有') + '你');
-    ok('躲进草丛后自己当然也看得到', selfA);
-    // 挪回空地 → 对方又能看到
-    let emptyIdx = -1;
-    for (let i = 0; i < tilesBuf.length; i++) if (tilesBuf[i] === 0) { emptyIdx = i; break; }
-    a.send({ t: 'tank.teleport', x: (emptyIdx % ra.cols) * TILE + TILE / 2, y: Math.floor(emptyIdx / ra.cols) * TILE + TILE / 2 });
-    await sleep(500);
-    ok('离开草丛后对方重新看得到', b.last('tank.state').tks.some(t => t[0] === 1000 + ha.id));
-  }
 
-  // 子弹穿草：草丛被打薄成"稀疏草丛"(5)，这个非零值也要同步到对方
+  // 草丛遮挡：站到树丛格里，对方仍然收得到快照
+  // （草画在坦克上面，是遮挡不是隐身）—— 同样每轮都跟当前局对齐，中途换局就重来
+  let seenInBush = null, selfInBush = null, seenAfter = null, bushNote = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const rnd = await freshRound();
+    if (!rnd) { bushNote = '没等到正在打的对局'; break; }
+    const tiles = Buffer.from(rnd.tiles, 'base64');
+    let bushIdx = -1, emptyIdx = -1;
+    for (let i = 0; i < tiles.length; i++) {
+      if (bushIdx < 0 && tiles[i] === 4 && standableIn(tiles, rnd, i)) bushIdx = i;
+      if (emptyIdx < 0 && tiles[i] === 0) emptyIdx = i;
+    }
+    if (bushIdx < 0) { bushNote = '整张图没有能站的树丛格'; continue; }
+    const TILE = 32;
+    a.send({ t: 'tank.teleport', x: (bushIdx % rnd.cols) * TILE + TILE / 2, y: Math.floor(bushIdx / rnd.cols) * TILE + TILE / 2 });
+    await sleep(500);
+    seenInBush = b.last('tank.state').tks.some(t => t[0] === 1000 + ha.id);
+    selfInBush = a.last('tank.state').tks.some(t => t[0] === 1000 + ha.id);
+    a.send({ t: 'tank.teleport', x: (emptyIdx % rnd.cols) * TILE + TILE / 2, y: Math.floor(emptyIdx / rnd.cols) * TILE + TILE / 2 });
+    await sleep(500);
+    seenAfter = b.last('tank.state').tks.some(t => t[0] === 1000 + ha.id);
+    if (!stillSameRound(rnd)) {          // 换了局 → 摆位坐标和快照已经不是同一张图
+      bushNote = '第' + rnd.index + '局中途换局';
+      seenInBush = selfInBush = seenAfter = null; continue;
+    }
+    break;
+  }
+  // 草丛是"正常遮挡"（草画在坦克上面），不是把坦克藏起来：
+  // 数据照常下发，客户端靠草丛图形盖住它，并且草丛里不画头顶名字
+  ok('躲进草丛后坦克仍然正常同步（草丛是遮挡不是隐身）', seenInBush === true,
+    bushNote || ('对手快照里' + (seenInBush ? '有' : '没有') + '你'));
+  ok('躲进草丛后自己当然也看得到', selfInBush === true, bushNote);
+  ok('离开草丛后对方重新看得到', seenAfter === true, bushNote);
+
+  // 子弹穿草：草丛被打薄成"轻擦(6)"，这个非零值也要同步到对方
   {
-    // 找一格"左边是空地"的草丛：把 A 摆在左边朝右开枪，子弹必然穿过去
-    // 先按最理想的条件找（左边能站车 + 右边也是空地），找不到就放宽
-    const pickBush = (strict) => {
-      for (let i = ra.cols + 1; i < tilesBuf.length - ra.cols - 1; i++) {
-        if (tilesBuf[i] !== 4) continue;
-        const cc = i % ra.cols;
-        if (cc <= 1 || cc >= ra.cols - 2) continue;                 // 别贴着左右边界
-        if (tilesBuf[i - 1] !== 0 || !standable(i - 1)) continue;    // 左边要能站车
-        if (strict && (tilesBuf[i + 1] !== 0 || !standable(i + 1))) continue;  // 右边也留出空间
-        return i;
-      }
-      return -1;
-    };
-    let target = pickBush(true);
-    if (target < 0) target = pickBush(false);
-    if (target < 0) {
-      ok('找到可以试枪的草丛', false, '没有"左侧是空地"的草丛');
-    } else {
-      const cc = target % ra.cols, rw = Math.floor(target / ra.cols);
-      // B 端自己维护一张地图：用 tank.round 的 b64 + 每帧的 d（[索引,值] 成对）还原
-      b.mapTiles = Buffer.from(ra.tiles, 'base64');
-      b.mapPatches = [];
-      const watchMap = (m) => {
+    // B 端自己维护一张地图：用 tank.round 的 b64 + 每帧的 d（[索引,值] 成对）还原
+    // watchMap 只注册一次（后面几轮只是重置 mapTiles/mapPatches）
+    if (!b.watchMap) {
+      b.watchMap = (m) => {
         if (!m || !m.d) return;
         b.mapPatches.push(m.d.slice());
         for (let i = 0; i + 1 < m.d.length; i += 2) b.mapTiles[m.d[i]] = m.d[i + 1];
       };
-      (b.handlers['tank.state'] = b.handlers['tank.state'] || []).push(watchMap);
+      (b.handlers['tank.state'] = b.handlers['tank.state'] || []).push(b.watchMap);
+    }
+    let target = -1, before = -1, after = -1, first = null, note = '';
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const rnd = await freshRound();
+      if (!rnd) { note = '没等到正在打的对局'; break; }
+      const tiles = Buffer.from(rnd.tiles, 'base64');
+      // 找一格"左边是空地"的草丛：把 A 摆在左边朝右开枪，子弹必然穿过去
+      // 先按最理想的条件找（左边能站车 + 右边也是空地），找不到就放宽
+      const scan = (strict) => {
+        for (let i = rnd.cols + 1; i < tiles.length - rnd.cols - 1; i++) {
+          if (tiles[i] !== 4) continue;
+          const cc = i % rnd.cols;
+          if (cc <= 1 || cc >= rnd.cols - 2) continue;              // 别贴着左右边界
+          if (tiles[i - 1] !== 0 || !standableIn(tiles, rnd, i - 1)) continue;  // 左边要能站车
+          if (strict && (tiles[i + 1] !== 0 || !standableIn(tiles, rnd, i + 1))) continue;  // 右边也留出空间
+          return i;
+        }
+        return -1;
+      };
+      target = scan(true);
+      if (target < 0) target = scan(false);
+      if (target < 0) { note = '第' + rnd.index + '局没有"左侧是空地"的草丛'; target = -1; continue; }
+
+      const cc = target % rnd.cols, rw = Math.floor(target / rnd.cols);
+      before = tiles[target];
+      b.mapTiles = Buffer.from(rnd.tiles, 'base64');
+      b.mapPatches = [];
       a.send({ t: 'tank.teleport', x: (cc - 1) * 32 + 16, y: rw * 32 + 16, angle: Math.PI / 2 });
       await sleep(350);
       for (let shot = 0; shot < 2; shot++) {
@@ -329,12 +369,22 @@ async function settle(ms) { await sleep(ms || 220); }
         a.send({ t: 'tank.input', fire: false });
         await sleep(520);
       }
-      const before = tilesBuf[target], after = b.mapTiles[target];
+      after = b.mapTiles[target];
+      first = b.mapPatches.find(d => d.indexOf(target) >= 0) || null;
+      // 中途换局 → 这一轮的下标作废，等下一局重新找草丛
+      if (!stillSameRound(rnd)) {
+        note = '第' + rnd.index + '局中途换局'; target = -1; first = null; continue;
+      }
+      if (!first) note = '第' + rnd.index + '局这一格始终没被打到';
+      break;
+    }
+    if (target < 0) {
+      ok('找到可以试枪的草丛', false, note || '连着几局都没排上');
+    } else {
       // 第一发穿过草丛时先变成"轻擦(6)"（只擦破一点，比激光少得多）；多穿几发才会到稀疏(5)再到空地 0
-      const first = b.mapPatches.find(d => d.indexOf(target) >= 0);
       const firstVal = first ? first[first.indexOf(target) + 1] : null;
       ok('子弹第一次穿过草丛 → 只轻轻擦破(6)', firstVal === 6,
-        '开火前 ' + before + ' → 第一次变更 ' + firstVal);
+        '开火前 ' + before + ' → 第一次变更 ' + firstVal + (note ? '（' + note + '）' : ''));
       ok('地图变更按 [索引, 新值] 成对下发', !!first && first.length % 2 === 0,
         first ? JSON.stringify(first.slice(0, 8)) : '没有收到该格的变更');
       ok('反复穿过会把草丛越打越没（对方地图同步到）', after === 6 || after === 5 || after === 0,

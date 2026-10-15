@@ -10,6 +10,10 @@
  *                 **换页面小窗还在**，手动刷新网页才清掉；
  *   C. 房间频道  —— enterRoom 之后出现「本局」页签并自动展开，
  *                 房间里所有人可见（用另一个连接当"队友"验证双向可见），离开房间频道消失。
+ *   E. 不卡死 + 层级 —— 停在「好友」页签不会自己问自己（曾经 5 秒 4 万次请求、
+ *                 页面直接卡死）；停靠区层级低于控件，页签不会被盖住。
+ *   D. 左下角布局 —— 私聊小窗与聊天控件不会互相盖住（页签点得到）；
+ *                 矮窗口（开着 DevTools 那种）下控件与小窗都完整留在视口内。
  */
 const fs = require('fs');
 const os = require('os');
@@ -223,6 +227,11 @@ function peer(tag, fip, port) {
     ok('点一下控件能展开（收纳 → 展开）',
       await evalJs("!document.getElementById('wb-chat').classList.contains('min')") === true);
     ok('展开后能看到好友列表容器', await waitUntil("!!document.querySelector('#wcPane .wc-list')"));
+    // 展开后控件高得多：位置会被"整体留在屏幕里"的规则重新夹一次
+    // （拖到偏下时不会让下半截挂着屏幕外，页签也永远不会被顶出去）
+    const pos1b = await rect('#wb-chat');
+    ok('展开后控件仍整体在屏幕内（被夹回来了，不是挂到屏幕外）',
+      pos1b.top >= 0 && pos1b.top + pos1b.h <= 960, 'top=' + Math.round(pos1b.top) + ' h=' + Math.round(pos1b.h));
 
     // 这条对应"页签被好友列表盖住"的 bug：页签正中心点到的必须还是页签本身
     const tabHit = await evalJs(
@@ -247,8 +256,10 @@ function peer(tag, fip, port) {
     await reload();
     ok('刷新页面后控件依然在', await waitUntil("!!document.getElementById('wb-chat')"));
     const pos2 = await rect('#wb-chat');
-    ok('刷新后位置保持不变', Math.abs(pos2.left - pos1.left) < 3 && Math.abs(pos2.top - pos1.top) < 3,
-      Math.round(pos2.left) + ',' + Math.round(pos2.top));
+    // 和"展开后"的位置比：刷新前后都得是同一个位置（注意不能拿收纳态的位置比，
+    // 展开时控件会按新高度重新夹一次，位置本来就会往上挪到屏幕内）
+    ok('刷新后位置保持不变', Math.abs(pos2.left - pos1b.left) < 3 && Math.abs(pos2.top - pos1b.top) < 3,
+      Math.round(pos2.left) + ',' + Math.round(pos2.top) + '（展开后 ' + Math.round(pos1b.left) + ',' + Math.round(pos1b.top) + '）');
     ok('刷新后展开/收纳状态保持（刷新不会重置控件）',
       await evalJs("document.getElementById('wb-chat').classList.contains('min')") === false);
 
@@ -347,6 +358,116 @@ function peer(tag, fip, port) {
     await sleep(400);
     const st3 = await getStatus();
     ok('最后一人离开后频道被回收', st3.chatChannels === 0, 'chatChannels=' + st3.chatChannels);
+
+    /* ========= D. 左下角布局：私聊小窗别糊在控件上；矮窗口下谁也不越界 =========
+     * 两个真实踩过的坑：
+     *   ① 私聊小窗（302×384）和聊天控件（296×346）都贴在左下角，小窗会把控件连同
+     *      「好友」页签整个盖住 —— 页签看着就是"被下侧的 div 遮挡"，点不着；
+     *   ② 控件高度写死 346px 又贴底挂，窗口一矮（比如开着 DevTools）上半截被顶到屏幕外，
+     *      页签被挤在屏幕边缘，看着也像被下面的面板压住了。 */
+    console.log('\n== D. 左下角布局：小窗让开控件 / 矮窗口下不越界 ==');
+    await evalJs("WB.Chat.leaveRoom()");
+    await sleep(150);
+    const zoneHit = () => evalJs(
+      "(function(){var t=document.querySelector('.wc-tab[data-ctab=\"friends\"]');" +
+      "var r=t.getBoundingClientRect();var el=document.elementFromPoint(r.left+r.width/2, r.top+r.height/2);" +
+      "return el && (el===t || t.contains(el)) ? 'tab' : (el ? el.tagName+'.'+(el.className||'') : 'none');})()");
+    const overlapWithWidget = () => evalJs(
+      "(function(){var w=document.getElementById('wb-chat').getBoundingClientRect();" +
+      "var c=document.querySelector('.fb-chat');if(!c)return 'no-window';var r=c.getBoundingClientRect();" +
+      "return (r.right<=w.left+0.5||r.left>=w.right-0.5||r.bottom<=w.top+0.5||r.top>=w.bottom-0.5)?'clear':'overlap';})()");
+
+    await evalJs("WB.friends.openChat('10.2.0.11')");
+    await sleep(400);
+    ok('私聊小窗和聊天控件不再重叠（小窗自己往右让开了）', await overlapWithWidget() === 'clear',
+      'body=' + await evalJs("document.body.className") + ' 小窗 left=' +
+      await evalJs("Math.round(document.querySelector('.fb-chat').getBoundingClientRect().left)"));
+    ok('小窗不再盖住「好友」页签（页签点得到）', await zoneHit() === 'tab', await zoneHit());
+    await shot('chat-dock-side');
+
+    // 连开三个：谁也不许被 flex 压扁，最新那个必须完整可见（"点了聊天却没弹出来"）
+    await evalJs("WB.friends.openChat('10.2.0.12')");
+    await sleep(300);
+    await evalJs("WB.friends.openChat('10.2.0.13')");
+    await sleep(400);
+    const wins = await json("(function(){" +
+      "var d=document.getElementById('wb-friends-dock');" +
+      "var a=Array.prototype.map.call(d.querySelectorAll('.fb-chat'), function(c){" +
+      "  var r=c.getBoundingClientRect();" +
+      "  return {h:Math.round(r.height), top:Math.round(r.top), bottom:Math.round(r.bottom)};});" +
+      "return {n:a.length, wins:a, vh:window.innerHeight, dockBottom:Math.round(d.getBoundingClientRect().bottom)};})()");
+    ok('三开的私聊小窗都保持完整高度（没被压扁）',
+      wins.n === 3 && wins.wins.every(w => w.h >= 360), JSON.stringify(wins.wins));
+    ok('最新打开的那个小窗整块都在屏幕里（点了就一定能看见）',
+      wins.wins[wins.wins.length - 1].top >= 0 && wins.wins[wins.wins.length - 1].bottom <= wins.vh + 1,
+      JSON.stringify(wins.wins[wins.wins.length - 1]) + ' vh=' + wins.vh);
+
+    // 矮窗口：控件整体留在视口里（页签不会被顶到屏幕外）
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 320, deviceScaleFactor: 1, mobile: false });
+    await evalJs("window.dispatchEvent(new Event('resize'));1");
+    await sleep(500);
+    const short = await json("(function(){var w=document.getElementById('wb-chat').getBoundingClientRect();" +
+      "var t=document.querySelector('.wc-tab[data-ctab=\"friends\"]').getBoundingClientRect();" +
+      "var p=document.getElementById('wcPane').getBoundingClientRect();" +
+      "return {vh:window.innerHeight, wtop:Math.round(w.top), wbottom:Math.round(w.bottom)," +
+      " ttop:Math.round(t.top), tbottom:Math.round(t.bottom), paneH:Math.round(p.height)};})()");
+    ok('矮窗口（视口高 320）下整个聊天控件仍在屏幕内（页签没被顶出去）',
+      short.wtop >= 0 && short.wbottom <= short.vh + 1 && short.ttop >= 0 && short.tbottom <= short.vh + 1,
+      JSON.stringify(short));
+    ok('矮窗口下面板自己缩了个子，页签依旧点得到（没被面板压住）',
+      short.paneH >= 96 && (await zoneHit()) === 'tab', JSON.stringify(short));
+    const shortWin = await evalJs(
+      "(function(){var a=document.querySelectorAll('.fb-chat');if(!a.length)return 'no-window';" +
+      "var r=a[a.length-1].getBoundingClientRect();" +   // 最新那个（下拉区里只有它保证可见，老的靠滚动回看）
+      "return (r.top>=0 && r.bottom<=window.innerHeight+1 && r.height>=200) ? 'ok' : JSON.stringify({t:Math.round(r.top),b:Math.round(r.bottom),h:Math.round(r.height),vh:window.innerHeight});})()");
+    ok('矮窗口下打开的私聊小窗也完整可见（不会被裁到屏幕外）', shortWin === 'ok', shortWin);
+    await shot('chat-short-window');
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+    await evalJs("window.dispatchEvent(new Event('resize'));1");
+    await sleep(400);
+    await evalJs("(function(){var d=document.getElementById('wb-friends-dock');" +
+      "Array.prototype.forEach.call(d.querySelectorAll('.fb-chat'), function(c){" +
+      "  var x=c.querySelector('.hd .x'); if(x) x.click();});return 1;})()");
+    await sleep(300);
+
+    /* ========= E. 回归：页面卡死（自己问自己） + 层级压控件 =========
+       这两条都是真实用户报过的症状，务必钉死：
+       ① 停在「好友」页签时，_renderFriendList 里那个 friends.refresh 曾经无条件发，
+          而 friends.state 的处理又会走回 renderPane → 无限回环。
+          实测修复前 5 秒发 42242 次（≈8400 次/秒），页面直接卡死、点什么都没反应。
+       ② 停靠区（私聊小窗 + 邀请弹窗）z-index 曾是 150，比聊天控件（70）高，
+          又住在同一个角 → 小窗/弹窗把「本局 / 好友」页签整个盖住。
+          控件内部把页签 z-index 调多高都没用，那只在控件自己这层里有效。 */
+    console.log('\n== E. 不卡死 + 层级不压控件 ==');
+
+    // 数「自己发出的 friends.refresh 次数」和主线程心跳
+    await evalJs("(function(){window.__pulls=0;window.__hb=0;" +
+      "if(!window.__hbTimer)window.__hbTimer=setInterval(function(){window.__hb++;},100);" +
+      "var n=WB.friends.net,o=n.send;n.send=function(m){if(m&&m.t==='friends.refresh')window.__pulls++;return o.apply(this,arguments);};" +
+      "return 1;})()");
+    await click('.wc-head');                       // 展开
+    await sleep(300);
+    await click('.wc-tab[data-ctab="friends"]');   // 停在最容易回环的页签
+    await sleep(400);
+    await evalJs("window.__pulls=0;window.__hb=0;1");
+    const hbA = await evalJs("window.__hb");
+    await sleep(4000);
+    const pulls = await evalJs("window.__pulls");
+    const hbB = await evalJs("window.__hb");
+    ok('停在「好友」页签不再自己问自己（4 秒内 friends.refresh ≤ 2 次）', pulls <= 2,
+      pulls + ' 次（回环时会到上万次）');
+    ok('4 秒内主线程顺畅（心跳 ≥ 38/40）', (hbB - hbA) >= 38, (hbB - hbA) + '/40');
+
+    const zDock = await evalJs("getComputedStyle(document.getElementById('wb-friends-dock')).zIndex");
+    const zChat = await evalJs("getComputedStyle(document.getElementById('wb-chat')).zIndex");
+    ok('停靠区层级低于聊天控件（小窗/弹窗盖不住页签）', Number(zDock) < Number(zChat),
+      'dock=' + zDock + ' widget=' + zChat);
+    ok('开着私聊小窗时页签中心命中的就是页签本身', await zoneHit() === 'tab', await zoneHit());
+
+    // 再开一个小窗（此刻停靠区里有东西），页签仍要能点
+    await evalJs("(function(){var r=document.querySelector('#wcPane .wc-row');if(r)r.click();return 1;})()");
+    await sleep(600);
+    ok('开私聊小窗后页签仍命中最上层（没被小窗盖住）', await zoneHit() === 'tab', await zoneHit());
 
     mate.close();
     ok('全流程无 JS 报错', errors.length === 0, errors.join(' | '));

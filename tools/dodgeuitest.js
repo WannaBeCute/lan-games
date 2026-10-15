@@ -18,7 +18,14 @@ const { spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(ROOT, 'platform', 'server', 'server.cjs');
 const SHOTS = path.join(__dirname, 'shots');
-const PORT_SRV = 8125, PORT_DBG = 9338;
+/** 端口别写死：写死的端口一旦被别的东西占上，服务端就静默起不来（stdio 被忽略，连报错都看不到），
+ *  表现出来是"页面打不开"，很容易被误判成前端坏了。改成随机空闲端口，并允许外部传 baseUrl。 */
+function freePort() {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+}
 const CANDIDATES = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -69,9 +76,20 @@ class CDP {
   if (!exe) { console.log('未找到 Chrome/Edge，跳过界面自检'); process.exit(0); }
   if (!fs.existsSync(SHOTS)) fs.mkdirSync(SHOTS, { recursive: true });
 
-  const srv = spawn(process.execPath, [SERVER, '--port', String(PORT_SRV)], { cwd: ROOT, stdio: 'ignore' });
-  await sleep(1200);
-  const BASE = 'http://127.0.0.1:' + PORT_SRV;
+  const PORT_DBG = await freePort();
+  let BASE = process.argv[2];
+  let srv = null;
+  if (!BASE) {
+    const PORT_SRV = await freePort();
+    srv = spawn(process.execPath, [SERVER, '--port', String(PORT_SRV)], { cwd: ROOT, stdio: 'ignore' });
+    BASE = 'http://127.0.0.1:' + PORT_SRV;
+    // 等服务端真的能应答再开浏览器，别赌固定等待
+    for (let i = 0; i < 40; i++) {
+      try { await fetch(BASE + '/api/status'); break; } catch (e) { await sleep(150); }
+    }
+  } else {
+    await sleep(300);
+  }
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-dodge-ui-'));
   const chrome = spawn(exe, [
@@ -481,9 +499,83 @@ class CDP {
     await shot('dodge-editor-library');
     await evalJs("document.getElementById('btnCheck').click()");
     await waitUntil("/能通关|过不去/.test(document.getElementById('statusLine').textContent)", 8000);
-    ok('能检查这一关能不能通关',
-      await evalJs("/能通关|过不去/.test(document.getElementById('statusLine').textContent)"),
+    ok('能检查这一关能不能通关（并且直接开始回放）',
+      await evalJs("/能通关|走完了|回放中/.test(document.getElementById('statusLine').textContent)"),
       await evalJs("document.getElementById('statusLine').textContent"));
+
+    /* ---- 障碍在画布上真的画出来了（半径改成内核固定值后专门盯这条） ---- */
+    console.log('\n== B9a. 圆形障碍在编辑器画布上可见 ==');
+    // 别去猜"第一个障碍画在哪"：直接以圆心为中心扫一小块，数有多少红像素
+    const obInfo = await evalJs("(function(){var E=__EDITOR_DEBUG.E;var C=window.DodgeCore;" +
+      "var o=null;for(var i=0;i<E.level.obstacles.length;i++){if(!E.level.obstacles[i].orbit){o=E.level.obstacles[i];break;}}" +
+      "if(!o)return 'no-obstacle';" +
+      "var c=C.gridCenter(o.path[0].col,o.path[0].row);" +
+      "var cv=document.getElementById('edCv');var ctx=cv.getContext('2d');" +
+      "var k=cv.width/(E.level.cols*40);" +
+      "function redAt(dx,dy){var d=ctx.getImageData(Math.round((c.x+dx)*k),Math.round((c.y+dy)*k),1,1).data;" +
+      "  return d[0]>150&&d[1]<130&&d[2]<130;}" +
+      "var n=0;for(var dx=-20;dx<=20;dx++)for(var dy=-20;dy<=20;dy++){if(redAt(dx,dy))n++;}" +
+      "return JSON.stringify({r:C.OBSTACLE_RADIUS,k:Math.round(k*100)/100,red:n," +
+      "  out20:redAt(22,0),in8:redAt(8,0),hasRadius:o.radius!==undefined});})()");
+    const ob = JSON.parse(obInfo === 'no-obstacle' ? '{}' : obInfo);
+    ok('障碍真的画在画布上（圆心周围有一片红）', (ob.red || 0) > 30,
+      obInfo === 'no-obstacle' ? '这一关没有直线巡逻的障碍' : JSON.stringify(ob));
+    ok('画出来的半径就是内核那个 13px（+8px 还是红、+22px 已是白底）',
+      ob.in8 === true && ob.out20 === false, JSON.stringify(ob));
+    ok('编辑器里的障碍数据不带 radius（半径只来自内核固定值）', ob.hasRadius === false);
+
+    /* ---- 检查能否通关 → 编辑器里回放最优解（2026-10-15 新增） ---- */
+    console.log('\n== B9b. 检查通关后回放最优解，时间与计算一致 ==');
+    await evalJs("(function(){var E=__EDITOR_DEBUG.E;" +
+      "var lv={version:1,id:'probe',name:'回放探针',difficulty:1,cols:14,rows:9," +
+      "  spawns:[{col:0,row:4}],checkpoints:[],goals:[{col:13,row:4}],walls:[]," +
+      "  obstacles:[{id:'a',path:[{col:4,row:3},{col:4,row:5}],speed:90,loopMode:'pingpong'}," +
+      "             {id:'b',path:[{col:8,row:5},{col:8,row:3}],speed:90,loopMode:'pingpong'}]};" +
+      "E.level=lv; E.selected=null; E.sel=[]; if(window.DC) {} return 1;})()");
+    await evalJs("(function(){__EDITOR_DEBUG.refresh();return 1;})()");
+    await sleep(300);
+    // 编辑器页面里内核的全局名是 DodgeCore（editor.js 内部才叫 DC）
+    ok('编辑器里能拿到内核', await waitUntil("!!window.DodgeCore"));
+    const solved = await evalJs("(function(){var C=window.DodgeCore;" +
+      "var r=C.solveReachable(C.normalizeLevel(__EDITOR_DEBUG.exportLevel()),60);" +
+      "return JSON.stringify({ok:r.ok,time:r.time,ticks:r.ticks,steps:(r.path||[]).length});})()");
+    const sv = JSON.parse(solved);
+    ok('这一关能算出最优解（回放素材就绪）', sv.ok && sv.steps > 1,
+      sv.ok ? (sv.steps + ' 个落脚点 / ' + sv.time.toFixed(2) + ' 秒') : '算不出');
+    // 先把上一段（内置第 4 关）留下的回放收掉，再点按钮重新放这一关
+    await evalJs("(function(){var b=document.getElementById('btnCheck');" +
+      "var E=__EDITOR_DEBUG.E;if(E.solve&&!E.solve.done)b.click();return 1;})()");
+    await sleep(200);
+    const restTick = await evalJs("__EDITOR_DEBUG.E.solve ? __EDITOR_DEBUG.E.solve.tick : -1");
+    ok('上一次回放结束后，再点按钮是重新播一遍（不是变成"停止"）',
+      restTick === -1 || await evalJs("__EDITOR_DEBUG.E.solve.done === true"),
+      '旧回放 tick=' + restTick + ' done=' + await evalJs("__EDITOR_DEBUG.E.solve ? !!__EDITOR_DEBUG.E.solve.done : 'n/a'"));
+
+    await evalJs("document.getElementById('btnCheck').click()");
+    ok('点「检查能否通关」后开始回放',
+      await waitUntil("!!__EDITOR_DEBUG.E.solve && !__EDITOR_DEBUG.E.solve.done && __EDITOR_DEBUG.E.solve.tick >= 0", 6000),
+      await evalJs("__EDITOR_DEBUG.E.solve ? 'tick=' + __EDITOR_DEBUG.E.solve.tick : '没进入回放'"));
+    const midTick = await evalJs("__EDITOR_DEBUG.E.solve ? __EDITOR_DEBUG.E.solve.tick : -1");
+    await sleep(500);
+    const laterTick = await evalJs("__EDITOR_DEBUG.E.solve ? __EDITOR_DEBUG.E.solve.tick : -1");
+    ok('回放里时间片在往前走（机器人真的在动）', laterTick > midTick && laterTick > 0,
+      midTick + ' → ' + laterTick);
+    const botDrawn = await evalJs("(function(){var s=__EDITOR_DEBUG.E.solve;" +
+      "if(!s)return 'no-solve';var p=window.DodgeCore.solveBotPos(s.path, s.tick);" +
+      "return JSON.stringify({x:Math.round(p.x),y:Math.round(p.y)});})()");
+    ok('机器人位置由内核的 solveBotPos 给出（与求解同一份插值）',
+      botDrawn !== 'no-solve' && JSON.parse(botDrawn).x >= 0, botDrawn);
+    // 等它播完（时间按时间片走，总时长 = ticks × 62.5ms）
+    await waitUntil("__EDITOR_DEBUG.E.solve && __EDITOR_DEBUG.E.solve.tick >= __EDITOR_DEBUG.E.solve.ticks", 20000);
+    const done = JSON.parse(await evalJs("JSON.stringify({tick:__EDITOR_DEBUG.E.solve.tick," +
+      "ticks:__EDITOR_DEBUG.E.solve.ticks,time:__EDITOR_DEBUG.E.solve.time," +
+      "step:window.DodgeCore.SOLVE_STEP,status:document.getElementById('statusLine').textContent})"));
+    ok('回放走到终点，用时与计算结果一致',
+      done.tick === done.ticks && Math.abs(done.tick * done.step - done.time) < 1e-9,
+      'tick ' + done.tick + '/' + done.ticks + ' → ' + (done.tick * done.step).toFixed(2) + 's（计算 ' + done.time.toFixed(2) + 's）');
+    ok('播完的提示语里也是同一个时间', done.status.indexOf((done.tick * done.step).toFixed(2)) >= 0,
+      done.status);
+    await shot('dodge-solve-replay');
 
     await pickTool('wall');
     await drag(3, 3, 4, 3);

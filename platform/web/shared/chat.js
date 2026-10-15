@@ -29,6 +29,10 @@ window.WB = window.WB || {};
 
   var LS_STATE = 'wb.chat.state.v1';       // { x, y, min, hidden, tab, activeRoom }
   var BALL = 48;
+  /* 好友私聊小窗的"落脚区"（尺寸与位置见 friends.css 的 .wb-friends-dock / .fb-chat）。
+     控件只要压在这块上，小窗就会往右让开 —— 否则小窗会正好糊在控件上，
+     连「好友 / 本局」这两个页签都点不到（详情见下面 syncDockSide）。 */
+  var DOCK_ZONE = { left: 14, bottom: 14, width: 302, height: 384 };
 
   function load(key, dft) {
     try { return JSON.parse(localStorage.getItem(key) || 'null') || dft; } catch (e) { return dft; }
@@ -235,7 +239,7 @@ window.WB = window.WB || {};
       self.tab = b.dataset.ctab;
       self._saveState();
       WB.audio.play('click');
-      self.renderPane();
+      self.renderPane(true);        // 用户主动切页签 → 这时才去要一次最新好友数据
       self.renderBadge();
     });
     this._bindDrag();
@@ -258,20 +262,54 @@ window.WB = window.WB || {};
 
   ChatApp.prototype.applyPos = function () {
     var r = this.root;
+    var box = r.getBoundingClientRect();
+    var w = box.width || 296, h = box.height || 0;
     if (!this.pos) {
       r.classList.add('wc-default');
       r.style.left = ''; r.style.top = ''; r.style.bottom = '';
       this.ball.classList.add('wc-default');
       this.ball.style.left = ''; this.ball.style.top = '';
+      this.syncDockSide();
       return;
     }
     r.classList.remove('wc-default');
     this.ball.classList.remove('wc-default');
-    var x = Math.max(0, Math.min(this.pos.x, window.innerWidth - 60));
-    var y = Math.max(0, Math.min(this.pos.y, window.innerHeight - 40));
+    // 位置是本机记下来的，可能来自"窗口还很大 / 还是收纳态"的时候：
+    // 这里按**现在的尺寸**再夹一次，保证整个控件都留在屏幕里（别把页签顶到屏幕外）
+    var x = Math.max(0, Math.min(this.pos.x, Math.max(0, window.innerWidth - w)));
+    var y = Math.max(0, Math.min(this.pos.y, Math.max(0, window.innerHeight - h - 4)));
     r.style.left = x + 'px'; r.style.top = y + 'px'; r.style.bottom = 'auto';
     this.ball.style.left = Math.max(0, Math.min(x + 10, window.innerWidth - BALL - 4)) + 'px';
     this.ball.style.top = y + 'px';
+    this.syncDockSide();
+  };
+
+  /**
+   * 控件是不是正压在「好友私聊小窗的落脚区」上？
+   * 是的话给小窗算一个"往右让开"的距离（--wb-dock-shift，见 friends.css），
+   * 因为小窗比控件还大（302×384 vs 296×346）又压在同一角，不让开的话
+   * 页签会被小窗（确切说是它的消息区 div）盖住，点不着。
+   * 让开距离按**控件当前实际位置**算：控件被拖到哪，小窗就让到它右边 8px；
+   * 但也不能把自己顶出屏幕（右边至少留 14px）。
+   */
+  ChatApp.prototype.syncDockSide = function () {
+    if (!document.body || !this.root) return;
+    var on = false, shift = 0;
+    var box = this.root.getBoundingClientRect();
+    if (!this.hidden && box.width > 0 && box.height > 0) {
+      var vh = window.innerHeight;
+      var zl = DOCK_ZONE.left, zr = zl + DOCK_ZONE.width;
+      var zb = vh - DOCK_ZONE.bottom, zt = zb - DOCK_ZONE.height;
+      on = box.left < zr && box.right > zl && box.top < zb && box.bottom > zt;
+      if (on) {
+        var winW = document.querySelector('.wb-friends-dock .fb-chat');
+        winW = (winW && winW.offsetWidth) || DOCK_ZONE.width;
+        var maxShift = Math.max(0, window.innerWidth - zl - winW - 14);
+        shift = Math.max(0, Math.min(Math.round(box.right + 8 - zl), maxShift));
+      }
+    }
+    document.body.classList.toggle('wc-dock-side', !!on);
+    document.body.style.setProperty('--wb-dock-shift', shift + 'px');
   };
 
   ChatApp.prototype._bindDrag = function () {
@@ -293,8 +331,10 @@ window.WB = window.WB || {};
     function move(ev) {
       if (!dragging) return;
       var p = point(ev);
-      var x = Math.max(0, Math.min(p.x - dragging.dx, window.innerWidth - 80));
-      var y = Math.max(0, Math.min(p.y - dragging.dy, window.innerHeight - 34));
+      // 也按控件当前尺寸夹：拖到边角时整个控件都留在屏幕里，不会"半截在外面"
+      var w = self.root.offsetWidth || 296, h = self.root.offsetHeight || 0;
+      var x = Math.max(0, Math.min(p.x - dragging.dx, Math.max(0, window.innerWidth - w)));
+      var y = Math.max(0, Math.min(p.y - dragging.dy, Math.max(0, window.innerHeight - h)));
       if (!self.pos || Math.abs(x - self.pos.x) > 1 || Math.abs(y - self.pos.y) > 1) dragging.moved = true;
       self.pos = { x: x, y: y };
       self.applyPos();
@@ -324,8 +364,10 @@ window.WB = window.WB || {};
     this.root.classList.toggle('min', this.min);
     this.root.classList.toggle('gone', this.hidden);
     this.ball.classList.toggle('gone', !this.hidden);
-    if (!this.min) { this.renderPane(); if (this._focusInput) this._focusInput.focus(); }
+    if (!this.min) { this.renderPane(true); if (this._focusInput) this._focusInput.focus(); }
     this.renderPreview();
+    this.applyPos();      // 展开/收起高度差很多，按新高度重新夹一次，保证整体在屏幕里
+    this.syncDockSide();
     this._saveState();
   };
 
@@ -333,6 +375,7 @@ window.WB = window.WB || {};
     this.hidden = true;
     this.root.classList.add('gone');
     this.ball.classList.remove('gone');
+    this.syncDockSide();
     this._saveState();
     WB.ui.toast('聊天已隐藏，点 💬 小圆钮可以叫回来');
   };
@@ -341,8 +384,9 @@ window.WB = window.WB || {};
     this.hidden = false;
     this.root.classList.remove('gone');
     this.ball.classList.add('gone');
+    this.syncDockSide();
     this._saveState();
-    this.renderPane();
+    this.renderPane(true);        // 从小圆钮叫回来 = 用户刚打开，拉一次最新
     this.renderPreview();
   };
 
@@ -427,19 +471,37 @@ window.WB = window.WB || {};
   };
 
   /* ---------------- 面板 ---------------- */
-  ChatApp.prototype.renderPane = function () {
+  /**
+   * @param pullFresh  true = "用户刚打开好友页，主动向服务端要一次最新数据"。
+   *   默认 false —— 因为 friends.state 的处理也会走到这里，如果在这里无条件发
+   *   friends.refresh，就会形成死循环：
+   *     renderPane → friends.refresh → 服务端回 friends.state
+   *                → refreshFromFriends() → renderPane → ……
+   *   服务端本来就会在任何变化时主动推 friends.state，所以"被动渲染"根本不用再问。
+   */
+  ChatApp.prototype.renderPane = function (pullFresh) {
     var pane = this.pane;
     if (!pane || this.min || this.hidden) return;
     if (this.tab === 'room' && !this.room) this.tab = 'friends';
     pane.textContent = '';
     if (this.tab === 'room') this._renderRoom();
-    else this._renderFriendList();
+    else this._renderFriendList(pullFresh);
   };
 
-  ChatApp.prototype._renderFriendList = function () {
+  /** 顺手加一道保险：即便将来有人又在上层发了 refresh，2 秒内也不重复发第二趟 */
+  ChatApp.prototype._pullFriendsOnce = function () {
+    var f = this.friendsApp();
+    if (!f || !f.net) return;
+    var now = Date.now();
+    if (this._lastFriendsPull && now - this._lastFriendsPull < 2000) return;
+    this._lastFriendsPull = now;
+    f.net.send({ t: 'friends.refresh' });
+  };
+
+  ChatApp.prototype._renderFriendList = function (pullFresh) {
     var self = this;
     var f = this.friendsApp();
-    if (f) f.net.send({ t: 'friends.refresh' });
+    if (pullFresh) this._pullFriendsOnce();
     var list = el('div', 'wc-list');
     var arr = this.friendList();
     if (!arr.length) {
@@ -568,6 +630,8 @@ window.WB = window.WB || {};
     this.renderPane();
     this.renderBadge();
     this.renderPreview();
+    this.applyPos();          // 展开到本局频道后重新贴边：别让控件跑到屏幕外面
+    this.syncDockSide();
     this._saveState();
     WB.ui.toast('房间聊天已开启：本局里所有人可见', 'ok');
     return this.roomConv;
