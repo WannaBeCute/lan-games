@@ -14,6 +14,9 @@ _net.txt
 # ---- 好友系统运行时数据（好友关系与聊天记录，每台服务器各一份） ----
 platform/server/friends-data.json
 
+# ---- 底力练习器运行时数据（排行榜 / 皮肤广场，每台服务器各一份） ----
+games/dili/server/data/
+
 # ---- 日志 ----
 *.log
 npm-debug.log*

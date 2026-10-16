@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>底力练习器 · 机房小游戏</title>
+<link rel="stylesheet" href="/shared/app.css">
+<link rel="stylesheet" href="/dili/dili.css">
+<link rel="stylesheet" href="/shared/friends.css">
+<link rel="stylesheet" href="/shared/chat.css">
+</head>
+<body class="dili-theme">
+
+<div class="topbar">
+  <div class="brand"><span class="logo"></span><a href="/">机房小游戏</a><span class="crumb">/ 底力练习器</span></div>
+  <div class="topbar-right">
+    <span class="net-badge" id="netBadge">未连接</span>
+    <button class="btn tiny ghost" id="btnSettings">⚙ 设置</button>
+    <a class="btn tiny ghost" href="/">返回主页</a>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ============ 主菜单（游戏画面作背景，内容居中，侧栏排行榜） ============ -->
+  <section class="screen" id="scr-menu">
+    <div class="menu-bg" id="menuBg" aria-hidden="true"></div>
+    <div class="menu-layout">
+      <div class="menu-card">
+        <h1>底力练习器</h1>
+        <p class="sub">音符不断落下，在最下面一行点中它 —— 打得越准越快，落得越快<br>
+          <span class="dim small">点错一次就结束 · 玩法照搬开源项目 EatKano（MIT）</span></p>
+
+        <div class="opt-row center">
+          <span class="opt-label">键数</span>
+          <div class="chip-row" id="rowKeys">
+            <button class="chip on" data-keys="4">4K</button>
+            <button class="chip" data-keys="5">5K</button>
+            <button class="chip" data-keys="6">6K</button>
+          </div>
+        </div>
+
+        <div class="opt-row center">
+          <span class="opt-label">模式</span>
+          <div class="chip-row" id="rowMode">
+            <button class="chip on" data-mode="timed">限时模式</button>
+            <button class="chip" data-mode="endless">无尽模式</button>
+          </div>
+        </div>
+
+        <div class="opt-row center" id="rowTimed">
+          <span class="opt-label">时长</span>
+          <div class="chip-row" id="rowSeconds">
+            <button class="chip on" data-sec="20">20 秒</button>
+            <button class="chip" data-sec="60">1 分钟</button>
+            <button class="chip" data-sec="180">3 分钟</button>
+            <button class="chip" data-sec="0">自定义…</button>
+          </div>
+          <input type="number" id="inpSeconds" min="5" max="600" value="30" style="display:none;width:90px"> <span class="dim small" id="secUnit" style="display:none">秒（自定义时长不上排行榜）</span>
+        </div>
+        <p class="dim small" id="rowEndless" style="display:none">无尽模式没有时间上限，点错为止，成绩按 4K/5K/6K 分别计入排行榜</p>
+
+        <div class="btn-row center">
+          <button class="btn primary big" id="btnStart">开始游戏</button>
+          <button class="btn" id="btnLayout">布局调整</button>
+          <button class="btn" id="btnSkin">皮肤工坊</button>
+        </div>
+        <p class="dim small" id="skinNow" style="margin-top:12px"></p>
+        <p class="key-hint" id="keyHint"></p>
+        <p class="key-hint" id="keyHint"></p>
+        <p class="key-hint" id="keyHint"></p>
+        <p class="key-hint" id="keyHint"></p>
+      </div>
+
+      <!-- 侧栏：排行榜（实时） -->
+      <aside class="menu-side">
+        <div class="side-panel">
+          <h3>排行榜 <span class="dim small">实时</span></h3>
+          <div class="chip-row small-chips" id="boardKeys">
+            <button class="chip on" data-bkeys="4">4K</button>
+            <button class="chip" data-bkeys="5">5K</button>
+            <button class="chip" data-bkeys="6">6K</button>
+          </div>
+          <div class="chip-row small-chips" id="boardMode">
+            <button class="chip on" data-bmode="timed">限时</button>
+            <button class="chip" data-bmode="endless">无尽</button>
+          </div>
+          <div class="chip-row small-chips" id="boardSecs">
+            <button class="chip on" data-bsec="20">20s</button>
+            <button class="chip" data-bsec="60">1min</button>
+            <button class="chip" data-bsec="180">3min</button>
+          </div>
+          <div class="board-table" id="menuBoard"><p class="dim small">加载中…</p></div>
+        </div>
+
+        <!-- 皮肤广场精选：点击直接换上 -->
+        <div class="side-panel">
+          <h3>皮肤广场 <span class="dim small">点击即用</span></h3>
+          <div class="plaza-strip" id="menuPlaza"><p class="dim small">加载中…</p></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ 游戏区 ============ -->
+  <section class="screen" id="scr-game" style="display:none">
+    <div class="game-viewport" id="gameViewport">
+      <div class="game-frame" id="gameFrame">
+        <div class="game-inner" id="gameInner">
+          <div class="game-bg" id="gameBg"></div>
+          <div class="game-lanes" id="gameLanes"></div>
+          <div class="GameLayer" id="GameLayer1"></div>
+          <div class="GameLayer" id="GameLayer2"></div>
+          <div class="game-keys" id="gameKeys"></div>
+        </div>
+      </div>
+      <div class="game-hud">
+        <span class="hud-chip" id="hudMode">限时 · 4K · 20s</span>
+        <span class="hud-timer" id="hudTimer">20.00</span>
+        <span class="hud-chip">得分 <b id="hudScore">0</b></span>
+        <span class="hud-chip" id="hudCps">0.00 CPS</span>
+        <button class="btn tiny ghost" id="btnPause">⏸ 暂停</button>
+        <button class="btn tiny ghost" id="btnQuit">退出</button>
+      </div>
+      <div class="pause-overlay" id="pauseOverlay" style="display:none">
+        <div>
+          <h2>已暂停</h2>
+          <p class="dim">按 空格 或点击这里继续 · 暂停时间不计入成绩</p>
+        </div>
+      </div>
+      <div class="ready-overlay" id="readyOverlay">
+        <div>
+          <h2 id="readyTitle">准备好了吗？</h2>
+          <div class="ready-keys" id="readyKeys"></div>
+          <p class="dim">音符落到最下面一行时，按下它所在轨道的键 —— 按下第一颗键开始计时</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ============ 结算弹层 ============ -->
+<div class="wb-mask" id="resultMask" style="display:none">
+  <div class="wb-dialog result-dialog">
+    <h3 id="resTitle">对局结束</h3>
+    <p class="res-quote" id="resQuote"></p>
+    <div class="res-grid">
+      <div><em>坚持了</em><b id="resTime">--</b></div>
+      <div><em>得分</em><b id="resScore">--</b></div>
+      <div><em>行数</em><b id="resRows">--</b></div>
+      <div><em>平均 CPS</em><b id="resCps">--</b></div>
+      <div><em>按错</em><b id="resErr">--</b></div>
+      <div><em>折合 BPM</em><b id="resBpm">--</b></div>
+    </div>
+    <p class="res-rank" id="resRank"></p>
+    <div class="btn-row center">
+      <button class="btn primary" id="btnRetry">再来一局（R）</button>
+      <button class="btn ghost" id="btnBackMenu">回菜单</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 布局调整 ============ -->
+<div class="wb-mask" id="layoutMask" style="display:none">
+  <div class="wb-dialog">
+    <h3>布局调整</h3>
+    <div class="form-grid">
+      <label>游戏区宽度 <b id="valWidth">60%</b>
+        <input type="range" id="layWidth" min="40" max="100" step="1" value="60">
+        <span class="dim small">轨道区占页面宽度的比例</span>
+      </label>
+      <label>音符块高度 <b id="valBlock">100%</b>
+        <input type="range" id="layBlock" min="60" max="160" step="5" value="100">
+        <span class="dim small">100% = 正方形，调小更紧凑、调大更好按</span>
+      </label>
+      <label>判定线位置（底部留白） <b id="valJudge">0%</b>
+        <input type="range" id="layJudge" min="0" max="30" step="1" value="0">
+        <span class="dim small">把判定区从屏幕底边往上抬</span>
+      </label>
+      <label>键位（当前 <b id="valKeyN">4K</b>）
+        <span class="dim small" id="layKeyShow" style="display:block;margin:4px 0"></span>
+        <span class="dim small">在右上角「⚙ 设置 → 键位 → 底力练习器」里调整对应键数的按键</span>
+      </label>
+      <label class="chk"><input type="checkbox" id="layShowKeys" checked> 在判定线上显示键位字母</label>
+    </div>
+    <p class="dim small" id="layParseTip" style="min-height:18px"></p>
+    <div class="btn-row center">
+      <button class="btn primary" id="laySave">保存</button>
+      <button class="btn" id="layReset">恢复默认</button>
+      <button class="btn ghost" id="layClose">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 皮肤工坊 ============ -->
+<div class="wb-mask" id="skinMask" style="display:none">
+  <div class="wb-dialog skin-dialog">
+    <h3>皮肤工坊</h3>
+    <div class="skin-cols">
+      <div class="skin-form">
+        <label>皮肤名称 <input type="text" id="skinName" maxlength="20" placeholder="我的皮肤"></label>
+        <div class="skin-field">
+          <span class="sf-label">背景图片</span>
+          <span class="dim small sf-hint">默认：无（空白）· 支持透明背景 PNG</span>
+          <span class="sf-file"><input type="file" id="fileBg" accept="image/*"><button class="btn tiny ghost" data-clear="bg">清除</button></span>
+          <img class="sf-thumb" id="thumbBg" style="display:none">
+        </div>
+        <div class="skin-field">
+          <span class="sf-label">键背景</span>
+          <span class="dim small sf-hint">每条轨道的底图，默认：无（空白）</span>
+          <span class="sf-file"><input type="file" id="fileKeyBg" accept="image/*"><button class="btn tiny ghost" data-clear="keyBg">清除</button></span>
+          <img class="sf-thumb" id="thumbKeyBg" style="display:none">
+        </div>
+        <div class="skin-field">
+          <span class="sf-label">音符图片</span>
+          <span class="dim small sf-hint">默认：黑色方块</span>
+          <span class="sf-file"><input type="file" id="fileNote" accept="image/*"><button class="btn tiny ghost" data-clear="note">清除</button></span>
+          <img class="sf-thumb" id="thumbNote" style="display:none">
+        </div>
+        <div class="skin-field">
+          <span class="sf-label">音符被击中后图片</span>
+          <span class="dim small sf-hint">默认：黑色方块 · 透明度 <b id="valOpacity">50%</b></span>
+          <span class="sf-file"><input type="file" id="fileHit" accept="image/*"><button class="btn tiny ghost" data-clear="hit">清除</button></span>
+          <input type="range" id="skinOpacity" min="0" max="100" step="5" value="50">
+          <img class="sf-thumb" id="thumbHit" style="display:none">
+        </div>
+        <div class="skin-field">
+          <span class="sf-label">击中音效</span>
+          <span class="sf-file"><input type="file" id="fileHitSnd" accept="audio/*"><button class="btn tiny ghost" data-clear="hitSound">清除</button><button class="btn tiny" data-play="hitSound">试听</button></span>
+        </div>
+        <div class="skin-field">
+          <span class="sf-label">击中错误音效</span>
+          <span class="sf-file"><input type="file" id="fileErrSnd" accept="audio/*"><button class="btn tiny ghost" data-clear="errSound">清除</button><button class="btn tiny" data-play="errSound">试听</button></span>
+        </div>
+      </div>
+      <div class="skin-preview">
+        <h4>实时预览</h4>
+        <div class="preview-box" id="previewBox">
+          <div class="pv-bg" id="pvBg"></div>
+          <div class="pv-lanes" id="pvLanes"></div>
+          <div class="pv-note" id="pvNote"></div>
+          <div class="pv-hit" id="pvHit"></div>
+        </div>
+        <p class="dim small">上=音符原样，下=被击中后（按透明度渲染）</p>
+      </div>
+    </div>
+    <p class="dim small" id="skinSizeTip"></p>
+    <div class="btn-row center">
+      <button class="btn primary" id="skinSaveLocal">保存并使用</button>
+      <button class="btn" id="skinUpload">上传到皮肤广场</button>
+      <button class="btn" id="skinPlaza">浏览皮肤广场</button>
+      <button class="btn ghost" id="skinReset">恢复默认皮肤</button>
+      <button class="btn ghost" id="skinClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 皮肤广场 ============ -->
+<div class="wb-mask" id="plazaMask" style="display:none">
+  <div class="wb-dialog">
+    <h3>皮肤广场</h3>
+    <p class="dim small">大家上传的皮肤都在这里，点「使用」直接套用。</p>
+    <div class="plaza-list" id="plazaList"><p class="dim">加载中…</p></div>
+    <div class="btn-row center"><button class="btn ghost" id="plazaClose">关闭</button></div>
+  </div>
+</div>
+
+<div class="wb-toasts" id="wb-toasts"></div>
+
+<script src="/shared/core.js"></script>
+<script src="/shared/net.js"></script>
+<script src="/dili/shared/dilicore.js"></script>
+<script src="/shared/friends.js"></script>
+<script src="/shared/chat.js"></script>
+<script src="/dili/main.js"></script>
+</body>
+</html>

@@ -174,6 +174,24 @@ window.WB = window.WB || {};
         p3: { up: 'KeyI', down: 'KeyK', left: 'KeyJ', right: 'KeyL', rescue: 'KeyU' },
         p4: { up: 'Numpad8', down: 'Numpad5', left: 'Numpad4', right: 'Numpad6', rescue: 'Numpad0' }
       }
+    },
+    {
+      id: 'dili', name: '底力练习器',
+      players: [
+        { id: 'p4k', label: '4 键（4K）' },
+        { id: 'p5k', label: '5 键（5K）' },
+        { id: 'p6k', label: '6 键（6K）' }
+      ],
+      actions: [
+        { k: 't1', label: '轨道 1' }, { k: 't2', label: '轨道 2' }, { k: 't3', label: '轨道 3' },
+        { k: 't4', label: '轨道 4' }, { k: 't5', label: '轨道 5' }, { k: 't6', label: '轨道 6' }
+      ],
+      hint: '音符落在哪条轨道，就按那条轨道的键。4K 用轨道 1~4，5K 用 1~5，6K 用 1~6。默认：4K = D/F/J/K；5K = D/F/<b>空格</b>/J/K；6K = S/D/F/J/K/L。',
+      defaults: {
+        p4k: { t1: 'KeyD', t2: 'KeyF', t3: 'KeyJ', t4: 'KeyK', t5: 'KeyL', t6: 'Semicolon' },
+        p5k: { t1: 'KeyD', t2: 'KeyF', t3: 'Space', t4: 'KeyJ', t5: 'KeyK', t6: 'KeyL' },
+        p6k: { t1: 'KeyS', t2: 'KeyD', t3: 'KeyF', t4: 'KeyJ', t5: 'KeyK', t6: 'KeyL' }
+      }
     }
   ];
 
@@ -184,7 +202,7 @@ window.WB = window.WB || {};
     rounds: 20,
     theme: 'dark',          // 总体 UI 主题：'dark'（默认）| 'light'
     keys: clone(GAMES[0].defaults),
-    keymaps: { tank: clone(GAMES[0].defaults), dodge: clone(GAMES[2].defaults) }
+    keymaps: { tank: clone(GAMES[0].defaults), dodge: clone(GAMES[2].defaults), dili: clone(GAMES[3].defaults) }
   };
 
   function deepMerge(target, src) {
