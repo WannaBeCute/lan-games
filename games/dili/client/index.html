@@ -67,9 +67,6 @@
         </div>
         <p class="dim small" id="skinNow" style="margin-top:12px"></p>
         <p class="key-hint" id="keyHint"></p>
-        <p class="key-hint" id="keyHint"></p>
-        <p class="key-hint" id="keyHint"></p>
-        <p class="key-hint" id="keyHint"></p>
       </div>
 
       <!-- 侧栏：排行榜（实时） -->
@@ -109,8 +106,7 @@
         <div class="game-inner" id="gameInner">
           <div class="game-bg" id="gameBg"></div>
           <div class="game-lanes" id="gameLanes"></div>
-          <div class="GameLayer" id="GameLayer1"></div>
-          <div class="GameLayer" id="GameLayer2"></div>
+          <div class="noteLayer" id="noteLayer"></div>
           <div class="game-keys" id="gameKeys"></div>
         </div>
       </div>
@@ -142,7 +138,7 @@
 
 <!-- ============ 结算弹层 ============ -->
 <div class="wb-mask" id="resultMask" style="display:none">
-  <div class="wb-dialog result-dialog">
+  <div class="wb-dialog dili-dialog result-dialog">
     <h3 id="resTitle">对局结束</h3>
     <p class="res-quote" id="resQuote"></p>
     <div class="res-grid">
@@ -163,12 +159,12 @@
 
 <!-- ============ 布局调整 ============ -->
 <div class="wb-mask" id="layoutMask" style="display:none">
-  <div class="wb-dialog">
+  <div class="wb-dialog dili-dialog">
     <h3>布局调整</h3>
     <div class="form-grid">
-      <label>游戏区宽度 <b id="valWidth">60%</b>
-        <input type="range" id="layWidth" min="40" max="100" step="1" value="60">
-        <span class="dim small">轨道区占页面宽度的比例</span>
+      <label>游戏区宽度 <b id="valWidth">24%</b>
+        <input type="range" id="layWidth" min="10" max="100" step="1" value="24">
+        <span class="dim small">轨道区占页面宽度的比例（默认 24%）</span>
       </label>
       <label>音符块高度 <b id="valBlock">100%</b>
         <input type="range" id="layBlock" min="60" max="160" step="5" value="100">
@@ -195,7 +191,7 @@
 
 <!-- ============ 皮肤工坊 ============ -->
 <div class="wb-mask" id="skinMask" style="display:none">
-  <div class="wb-dialog skin-dialog">
+  <div class="wb-dialog dili-dialog skin-dialog">
     <h3>皮肤工坊</h3>
     <div class="skin-cols">
       <div class="skin-form">
@@ -256,14 +252,16 @@
   </div>
 </div>
 
-<!-- ============ 皮肤广场 ============ -->
-<div class="wb-mask" id="plazaMask" style="display:none">
-  <div class="wb-dialog">
-    <h3>皮肤广场</h3>
+<!-- ============ 皮肤广场（右侧滑出抽屉） ============ -->
+<div class="wb-mask drawer-mask" id="plazaMask" style="display:none">
+  <aside class="drawer-panel">
+    <div class="drawer-head">
+      <h3>皮肤广场</h3>
+      <button class="drawer-x" id="plazaClose" title="关闭">✕</button>
+    </div>
     <p class="dim small">大家上传的皮肤都在这里，点「使用」直接套用。</p>
     <div class="plaza-list" id="plazaList"><p class="dim">加载中…</p></div>
-    <div class="btn-row center"><button class="btn ghost" id="plazaClose">关闭</button></div>
-  </div>
+  </aside>
 </div>
 
 <div class="wb-toasts" id="wb-toasts"></div>

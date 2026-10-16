@@ -177,19 +177,20 @@ window.WB = window.WB || {};
     },
     {
       id: 'dili', name: '底力练习器',
+      // count = 这一档实际用得到的轨数：4K 四条、5K 五条、6K 六条（设置里只列这么多行）
       players: [
-        { id: 'p4k', label: '4 键（4K）' },
-        { id: 'p5k', label: '5 键（5K）' },
-        { id: 'p6k', label: '6 键（6K）' }
+        { id: 'p4k', label: '4 键（4K）', count: 4 },
+        { id: 'p5k', label: '5 键（5K）', count: 5 },
+        { id: 'p6k', label: '6 键（6K）', count: 6 }
       ],
       actions: [
         { k: 't1', label: '轨道 1' }, { k: 't2', label: '轨道 2' }, { k: 't3', label: '轨道 3' },
         { k: 't4', label: '轨道 4' }, { k: 't5', label: '轨道 5' }, { k: 't6', label: '轨道 6' }
       ],
-      hint: '音符落在哪条轨道，就按那条轨道的键。4K 用轨道 1~4，5K 用 1~5，6K 用 1~6。默认：4K = D/F/J/K；5K = D/F/<b>空格</b>/J/K；6K = S/D/F/J/K/L。',
+      hint: '音符落在哪条轨道，就按那条轨道的键。每一档只列它自己用得到的轨道：4K 四条、5K 五条、6K 六条。<br>默认：4K = D/F/J/K；5K = D/F/<b>空格</b>/J/K；6K = S/D/F/J/K/L。（主页的键位提示也能直接点着改）',
       defaults: {
-        p4k: { t1: 'KeyD', t2: 'KeyF', t3: 'KeyJ', t4: 'KeyK', t5: 'KeyL', t6: 'Semicolon' },
-        p5k: { t1: 'KeyD', t2: 'KeyF', t3: 'Space', t4: 'KeyJ', t5: 'KeyK', t6: 'KeyL' },
+        p4k: { t1: 'KeyD', t2: 'KeyF', t3: 'KeyJ', t4: 'KeyK' },
+        p5k: { t1: 'KeyD', t2: 'KeyF', t3: 'Space', t4: 'KeyJ', t5: 'KeyK' },
         p6k: { t1: 'KeyS', t2: 'KeyD', t3: 'KeyF', t4: 'KeyJ', t5: 'KeyK', t6: 'KeyL' }
       }
     }
@@ -250,6 +251,18 @@ window.WB = window.WB || {};
       var map = settings.keymaps[gameId] || {};
       return deepMerge(clone(game.defaults[pid] || {}), map[pid] || {});
     },
+    /** 某游戏某玩家实际用得到的动作：按 players[].count 截断
+     *  （底力练习器的 4K/5K/6K 各只用 4/5/6 条轨道，不该都列 6 行） */
+    actionsFor(gameId, playerId) {
+      var game = settingsApi.gameById(gameId);
+      if (!game || !game.actions) return [];
+      var n = game.actions.length;
+      var list = game.players || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === playerId && list[i].count) n = list[i].count;
+      }
+      return game.actions.slice(0, n);
+    },
     save() {
       try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) { /* noop */ }
       WB.audio.setVolume(settings.sfxVolume, settings.muted);
@@ -282,8 +295,11 @@ window.WB = window.WB || {};
       var gameId, player, action, code;
       if (d !== undefined) { gameId = a; player = b; action = c; code = d; }
       else { gameId = 'tank'; player = a; action = b; code = c; }
-      var set = (settings.keymaps[gameId] || {})[player];
-      for (var k in set) if (k !== action && set[k] === code) return k;
+      var set = (settings.keymaps[gameId] || {})[player] || {};
+      // 只跟「这一档真正用得到的动作」比：旧存档里 4K 残留的 t5/t6 不该再来抢键
+      var allowed = {};
+      settingsApi.actionsFor(gameId, player).forEach(function (x) { allowed[x.k] = true; });
+      for (var k in set) if (k !== action && allowed[k] && set[k] === code) return k;
       return null;
     }
   };
@@ -526,7 +542,7 @@ window.WB = window.WB || {};
         var col = util.el('div', 'wb-keycol');
         var title = util.el('div', 'wb-keycol-title', pl.label);
         col.appendChild(title);
-        game.actions.forEach(function (a) {
+        settingsApi.actionsFor(game.id, pl.id).forEach(function (a) {
           var map = settings.keymaps[game.id][pl.id] || {};
           var cur = map[a.k] || game.defaults[pl.id][a.k];
           col.innerHTML += '<div class="wb-keyrow"><span>' + a.label + '</span>' +

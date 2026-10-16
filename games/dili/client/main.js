@@ -12,7 +12,7 @@ function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
 /* ================= 无尽模式参数（钢琴块式下落） ================= */
-var ENDLESS_START_SPEED = 2.0;    // 起始速度（键/秒）
+var ENDLESS_START_SPEED = 3.0;    // 起始速度（键/秒）
 var ENDLESS_MAX_SPEED = 26;       // 速度上限（键/秒）
 var ENDLESS_GROW = 1.015;         // 每过一行速度乘这个系数
 var ENDLESS_GROW_ADD = 0.02;      // 再额外加一点，起步不至于太肉
@@ -21,9 +21,10 @@ var ENDLESS_GROW_ADD = 0.02;      // 再额外加一点，起步不至于太肉
 var S = {
   net: null,
   keys: 4, mode: 'timed', seconds: 20,
-  layout: null,                    // { width, block, judge, keysMap:{4,5,6}, showKeys }
+  layout: null,                    // { width, block, judge, showKeys }
   skin: null,                      // 当前皮肤（null = 默认皮肤）
-  draft: null                      // 皮肤编辑器草稿
+  draft: null,                     // 皮肤编辑器草稿
+  capturing: false                 // 主页正在「按新键…」抓键，防重复触发
 };
 
 /* ================= 存档 ================= */
@@ -35,14 +36,15 @@ function saveJson(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); return true; }
   catch (e) { return false; }
 }
+/* 默认游戏区宽度 24%：旧版是 60%，实测铺满整个屏幕、音符大得离谱，缩到约 40%（60 × 0.4） */
+var DEFAULT_LAYOUT = { width: 24, block: 100, judge: 0, showKeys: true };
 function loadLayout() {
   var l = loadJson('dili.layout', null) || {};
   return {
-    width: l.width != null ? l.width : 60,
-    block: l.block != null ? l.block : 100,
-    judge: l.judge != null ? l.judge : 0,
-    showKeys: l.showKeys !== false,
-    keysMap: l.keysMap || {}
+    width: l.width != null ? l.width : DEFAULT_LAYOUT.width,
+    block: l.block != null ? l.block : DEFAULT_LAYOUT.block,
+    judge: l.judge != null ? l.judge : DEFAULT_LAYOUT.judge,
+    showKeys: l.showKeys !== false
   };
 }
 /* 平台键位表：4K/5K/6K 各一套（右上角 ⚙ 设置里可改） */
@@ -123,175 +125,226 @@ function gameCfg() {
   };
 }
 
+/** 视口 / 行高 / 可见行数：改布局、改窗口大小时重算（所有尺寸的唯一来源） */
+function metrics() {
+  var vp = $('gameViewport');
+  var pad = Math.max(0, Math.round(vp.clientHeight * (S.layout.judge || 0) / 100));
+  var w = Math.max(96, Math.round(vp.clientWidth * (S.layout.width || DEFAULT_LAYOUT.width) / 100));
+  var blockSize = w / S.keys;
+  var blockH = Math.max(20, Math.round(blockSize * (S.layout.block || 100) / 100));
+  var h = Math.max(120, vp.clientHeight - pad);          // 判定线以上的高度
+  return {
+    pad: pad, w: w, h: h, blockSize: blockSize, blockH: blockH,
+    rowsOnScreen: Math.ceil(h / blockH) + 1               // 一屏能看到的行数（含底部判定行）
+  };
+}
+
 function startGame() {
   var cfg = gameCfg();
   show('scr-game');
-  // 先立起新的 G（applyLayout 会往里写 blockSize/blockH，顺序不能反）
+  // 先立起新的 G（applyLayout 会往里写 metrics 并铺第一批音符，顺序不能反）
   G = {
-    cfg: cfg, rows: 0,
+    cfg: cfg,
     running: true, started: false, paused: false, over: false,
     score: 0, keyHits: 0, rowHits: 0, errors: 0,
-    timeNum: cfg.mode === 'timed' ? cfg.timeLimit : 0,
     startTs: 0, lastTap: 0, pausedMs: 0, pauseStart: null,
-    cps: [], timerIv: null,
-    list: [], index: 0,
-    // 无尽模式：自动下落 + 速度渐快
-    speed: ENDLESS_START_SPEED,     // 当前速度（键/秒）
-    rowHit: false,                  // 当前这一行在本次下落里有没有被打掉
-    fallTimer: null                 // 下落节拍（setTimeout id）
+    elapsed: 0,                 // 已进行时间（毫秒）：每帧按 delta-time 累加，暂停不计
+    cps: [],
+    // 连续的「滚动位置」（单位 = 行）：行号 R 的音符距判定线 = (R - rowFloat) × 行高。
+    // 画面和判定读的是同一个 rowFloat，所以不会再出现「看到的和判的不一样」。
+    rowFloat: 0,
+    index: 0,                   // 下一颗要打的行号（整数）
+    spawnRow: 0,                // 下一颗要生成的行号
+    notes: [],                  // 屏幕上的音符，按行号升序
+    anim: null, animT: 0,       // 限时模式：打对一行后往 index 滑一格的补间
+    speed: ENDLESS_START_SPEED, // 无尽模式速度（行/秒）
+    raf: 0, lastTs: 0, hudTs: 0, metrics: null
   };
-  applyLayout();                       // 计算块尺寸并铺好轨道
-  window.__G = G;                      // 调试/自检钩子：探针能读到对局状态
-  var vp = $('gameViewport');
-  G.rows = Math.max(6, Math.ceil((vp.clientHeight - vp.clientHeight * S.layout.judge / 100) / G.blockH) + 4);
-  G.layers = [$('GameLayer1'), $('GameLayer2')];
-  // 轨道/键位字母已在 applyLayout 里铺好，这里只填音符层
-  refreshLayer(G.layers[0], -G.blockH);
-  refreshLayer(G.layers[1], -G.blockH * (G.rows + 1));
+  $('noteLayer').innerHTML = '';
+  window.__G = G;               // 调试/自检钩子：探针能读到对局状态
+  applyLayout();                // 算尺寸 + 铺轨道/键位字母 + 生成初始音符
   $('hudMode').textContent = (cfg.mode === 'timed' ? '限时 · ' : '无尽 · ') + cfg.keyCount + 'K' +
     (cfg.mode === 'timed' ? ' · ' + cfg.timeLimit + 's' : '');
-  updateTimer(); updateHud();
   $('pauseOverlay').style.display = 'none';
   $('readyOverlay').style.display = 'flex';
   $('readyTitle').textContent = cfg.mode === 'timed' ? '限时 ' + cfg.timeLimit + ' 秒' : '无尽模式 · 会越来越快';
-  if (cfg.mode === 'endless') {
-    $('hudTimer').textContent = ENDLESS_START_SPEED.toFixed(2);
-    $('hudTimer').classList.add('is-speed');
-  } else {
-    $('hudTimer').classList.remove('is-speed');
-  }
   $('readyKeys').innerHTML = trackLabels(cfg.keyCount).map(function (t) {
     return '<span class="rk">' + esc(t) + '</span>';
   }).join('');
+  updateHud();
+  G.lastTs = 0;
+  G.raf = requestAnimationFrame(frame);
 }
 
-/** 布局：算块尺寸、铺轨道底图与键位字母 */
+/** 布局：算尺寸、铺轨道底图与键位字母、重排已有音符 */
 function applyLayout() {
-  var vp = $('gameViewport'), inner = $('gameInner');
-  var pad = vp.clientHeight * S.layout.judge / 100;
+  G.metrics = metrics();
+  var m = G.metrics;
+  var inner = $('gameInner');
   inner.style.top = '0';
-  inner.style.height = 'calc(100% - ' + pad + 'px)';
-  var w = vp.clientWidth * S.layout.width / 100;
-  inner.style.width = w + 'px';
-  var k = S.keys;
-  var blockSize = w / k;
-  var blockH = blockSize * S.layout.block / 100;
-  G = G || {};
-  G.blockSize = blockSize; G.blockH = blockH;
+  inner.style.width = m.w + 'px';
+  inner.style.height = m.h + 'px';        // 底边 = 判定线（判定线以上才是可落区域）
 
-  var bg = $('gameBg');
-  bg.style.backgroundImage = S.skin && S.skin.bg ? 'url(' + S.skin.bg + ')' : 'none';
+  $('gameBg').style.backgroundImage = (S.skin && S.skin.bg) ? 'url(' + S.skin.bg + ')' : 'none';
 
   var lanes = $('gameLanes');
   lanes.innerHTML = '';
-  for (var i = 0; i < k; i++) {
+  for (var i = 0; i < S.keys; i++) {
     var lane = document.createElement('div');
     lane.className = 'game-lane';
-    lane.style.left = (i * blockSize) + 'px';
-    lane.style.width = blockSize + 'px';
+    lane.style.left = (i * m.blockSize) + 'px';
+    lane.style.width = m.blockSize + 'px';
     if (S.skin && S.skin.keyBg) lane.style.backgroundImage = 'url(' + S.skin.keyBg + ')';
     lanes.appendChild(lane);
   }
   var kl = $('gameKeys');
   kl.innerHTML = '';
   if (S.layout.showKeys) {
-    var labels = trackLabels(k);
-    for (var j = 0; j < k; j++) {
+    var labels = trackLabels(S.keys);
+    for (var j = 0; j < S.keys; j++) {
       var d = document.createElement('div');
       d.className = 'game-key';
-      d.style.left = (j * blockSize) + 'px';
-      d.style.width = blockSize + 'px';
+      d.style.left = (j * m.blockSize) + 'px';
+      d.style.width = m.blockSize + 'px';
       d.textContent = labels[j] || '';
       kl.appendChild(d);
     }
   }
-  if (G.layers) {          // 对局中途改布局（暂停里）→ 重排已有块
-    for (var li = 0; li < G.layers.length; li++) {
-      var box = G.layers[li], kids = box.children;
-      for (var c = 0; c < kids.length; c++) {
-        var cell = kids[c], idx = cell._idx || 0;
-        cell.style.left = ((idx % k) * blockSize) + 'px';
-        cell.style.bottom = (Math.floor(idx / k) * blockH) + 'px';
-        cell.style.width = blockSize + 'px';
-        cell.style.height = blockH + 'px';
-      }
-    }
+  if (G.notes) {              // 对局中途改布局（暂停里）→ 已有音符按新尺寸重排
+    for (var n = 0; n < G.notes.length; n++) layoutNote(G.notes[n]);
+    fillNotes();
+    renderNotes();
   }
 }
 
-/** 重建一个层：rows 行、每行 1 个随机音符，层挪到 other 层上方 */
-function refreshLayer(box, yOverride) {
-  var k = G.cfg.keyCount, rows = G.rows;
-  box.innerHTML = '';
-  var frag = document.createDocumentFragment();
-  for (var r = 0; r < rows; r++) {
-    if (G.list.length > 4000) break;
-    var track = TC.nextTrack(null, k);
-    var cell = document.createElement('div');
-    cell.className = 'dili-cell';
-    cell._idx = r * k + track;
-    cell.style.left = (track * G.blockSize) + 'px';
-    cell.style.bottom = (r * G.blockH) + 'px';
-    cell.style.width = G.blockSize + 'px';
-    cell.style.height = G.blockH + 'px';
-    if (S.skin && S.skin.note) cell.style.backgroundImage = 'url(' + S.skin.note + ')';
-    else cell.classList.add('note-default');
-    frag.appendChild(cell);
-    G.list.push({ track: track, el: cell });
-  }
-  box.appendChild(frag);
-  var y = yOverride != null ? yOverride : (otherLayer(box).y - rows * G.blockH);
-  box.y = y;
-  setTransition(box, 0);
-  box.style.transform = 'translate3D(0,' + y + 'px,0)';
-  setTransition(box, TC.transitionMs(rowsLeft()));
+/** 把音符块摆到它所属轨道（左/宽/高）；纵向位置每帧由 renderNotes 刷 */
+function layoutNote(note) {
+  var m = G.metrics;
+  note.el.style.left = (note.track * m.blockSize) + 'px';
+  note.el.style.width = m.blockSize + 'px';
+  note.el.style.height = m.blockH + 'px';
 }
-function otherLayer(box) { return box === G.layers[0] ? G.layers[1] : G.layers[0]; }
-function setTransition(box, ms) { box.style.transitionDuration = ms + 'ms'; }
-function rowsLeft() { return G.list.length - G.index; }
+
+/** 生成一行：行号递增，每行在 keyCount 条轨道里随机一条放一个音符 */
+function spawnNote() {
+  var row = G.spawnRow++;
+  var track = TC.nextTrack(null, G.cfg.keyCount);
+  var el = document.createElement('div');
+  el.className = 'dili-cell';
+  if (S.skin && S.skin.note) el.style.backgroundImage = 'url(' + S.skin.note + ')';
+  else el.classList.add('note-default');
+  var note = { row: row, track: track, el: el, hit: false };
+  layoutNote(note);
+  G.notes.push(note);
+  $('noteLayer').appendChild(el);
+  return note;
+}
+
+/** 按需补行 + 回收已经沉到判定线下两行以外的音符（列表不会无限增长，也就不会再出现空白行） */
+function fillNotes() {
+  // 以「滚动位置」和「待打行号」的较大者为基准补行：限时模式里打得太快也不会出现空档
+  var limit = Math.floor(Math.max(G.rowFloat, G.index)) + G.metrics.rowsOnScreen + 1;
+  while (G.spawnRow <= limit) spawnNote();
+  while (G.notes.length && G.notes[0].row < G.rowFloat - 2) {
+    $('noteLayer').removeChild(G.notes[0].el);
+    G.notes.shift();
+  }
+}
+
+/** 每帧刷纵向位置：距判定线偏移 = (行号 - rowFloat) × 行高（大于 0 表示还在线上方） */
+function renderNotes() {
+  var m = G.metrics, rf = G.rowFloat;
+  for (var i = 0; i < G.notes.length; i++) {
+    var n = G.notes[i];
+    n.el.style.transform = 'translate3d(0,' + ((rf - n.row) * m.blockH).toFixed(2) + 'px,0)';
+  }
+}
+
+/** 当前要打的那一行（行号 === index） */
+function currentNote() {
+  for (var i = 0; i < G.notes.length; i++) if (G.notes[i].row === G.index) return G.notes[i];
+  return null;
+}
+
+/**
+ * 主循环：整个游戏只有这一个推进源（requestAnimationFrame + delta-time）。
+ * 限时模式 rowFloat 只在打对时补间；无尽模式 rowFloat 以 speed 连续推进。
+ * 画面与判定读同一个 rowFloat，所以不会再有「看着没到、判的却过了」的错位。
+ */
+function frame(ts) {
+  if (!G || G.over) return;
+  G.raf = requestAnimationFrame(frame);
+  if (!G.lastTs) G.lastTs = ts;
+  var dtMs = Math.min(64, ts - G.lastTs);    // 切后台/掉帧时封顶，避免一帧冲过好几行
+  G.lastTs = ts;
+  if (G.paused) return;
+  if (G.started) {
+    G.elapsed += dtMs;
+    if (G.cfg.mode === 'endless') {
+      G.rowFloat += G.speed * dtMs / 1000;
+      if (G.rowFloat >= G.index + 1) { missCurrentRow(); return; }   // 这一行被推过一整行还没打
+    } else if (G.anim) {
+      G.animT += dtMs;
+      var p = G.anim.dur > 0 ? Math.min(1, G.animT / G.anim.dur) : 1;
+      G.rowFloat = G.anim.from + (G.anim.to - G.anim.from) * p;
+      if (p >= 1) { G.anim = null; G.rowFloat = G.index; }
+    }
+    if (G.cfg.mode === 'timed' && timeLeftMs() <= 0) { endGame(null); return; }
+  }
+  fillNotes();
+  renderNotes();
+  if (ts - G.hudTs >= 40) { G.hudTs = ts; updateHud(); }
+}
 
 function handleHit(track) {
-  if (!G || G.over || !G.running) return;
-  if (G.paused) return;
-  var p = G.list[G.index];
-  if (!p) return;
-  if (track === p.track) {
-    if (G.cfg.mode === 'endless' && G.rowHit) return;    // 这一行已经打掉了，等它自己落下去
-    if (!G.started) startTimer();
-    G.score++; G.keyHits++;
-    // 音符被击中：换成「击中后」的视觉（皮肤可自定义，默认黑色方块半透明）
-    var el = p.el;
-    el.style.backgroundImage = S.skin && S.skin.hit ? 'url(' + S.skin.hit + ')' : 'none';
-    if (!(S.skin && S.skin.hit)) el.classList.add('note-default');
-    el.style.opacity = S.skin && typeof S.skin.hitOpacity === 'number' ? S.skin.hitOpacity : 0.5;
-    playHit(); recordHit();
-    if (G.cfg.mode === 'endless') {
-      // 无限模式：谱面自己往下走（见 fallTick），这里只做标记
-      G.rowHit = true;
-    } else {
-      G.index++; G.rowHits++;
-      moveLayers();
-    }
-    updateHud();
-  } else if (G.started) {
-    G.errors++;
-    playErr();
-    endGame(track);
+  if (!G || G.over || !G.running || G.paused) return;
+  var cur = currentNote();
+  if (!cur) return;
+  if (track !== cur.track) {                     // 点错：红闪「按错的那颗键」并结束
+    if (G.started) { G.errors++; playErr(); endGame(track, 'wrong'); }
+    return;                                      // 未开始前的误按不算数（预备界面里可以慢慢找键）
   }
+  if (cur.hit) return;                           // 同一颗不会被判两次
+  if (!G.started) startClock();
+  G.score++; G.keyHits++; G.rowHits++;
+  markHitNote(cur);
+  playHit(); recordHit();
+  G.index++;                                     // 下一颗待打
+  if (G.cfg.mode === 'endless') {
+    G.speed = Math.min(ENDLESS_MAX_SPEED, G.speed * ENDLESS_GROW + ENDLESS_GROW_ADD);
+  } else {
+    // 限时模式：打对一行就往下一格滑一行（连续补间，与判定共用同一个 rowFloat）
+    if (G.rowFloat < G.index - 1) G.rowFloat = G.index - 1;   // 手速极快时不让画面落后太多
+    G.anim = { from: G.rowFloat, to: G.index, dur: Math.max(60, Math.min(1200, 1000 / G.speed)) };
+    G.animT = 0;
+  }
+  updateHud();
 }
 
-function moveLayers() {
-  var ms = TC.transitionMs(rowsLeft());
-  var threshold = G.rows * G.blockH;
-  for (var i = 0; i < G.layers.length; i++) {
-    var g = G.layers[i];
-    g.y += G.blockH;
-    if (g.y >= threshold) refreshLayer(g);          // 这一层滚完了 → 挪到另一层上方重新填
-    else {
-      setTransition(g, ms);
-      g.style.transform = 'translate3D(0,' + g.y + 'px,0)';
-    }
-  }
+/** 把音符换成「击中后」的外观（皮肤可自定义，默认黑色方块半透明） */
+function markHitNote(note) {
+  note.hit = true;
+  var el = note.el;
+  el.style.backgroundImage = (S.skin && S.skin.hit) ? 'url(' + S.skin.hit + ')' : 'none';
+  if (!(S.skin && S.skin.hit)) el.classList.add('note-default');
+  el.style.opacity = (S.skin && typeof S.skin.hitOpacity === 'number') ? S.skin.hitOpacity : 0.5;
+}
+
+/** 无尽模式：这一行被推过一整行还没打 → 漏了，对局结束 */
+function missCurrentRow() {
+  var cur = currentNote();
+  G.errors++; playErr();
+  endGame(cur ? cur.track : null, 'miss');
+}
+
+/** 结束时的轨道闪烁：红=按错，橙=漏掉（轨道整列与底部键位字母同时闪） */
+function flashLane(track, kind) {
+  if (track == null) return;
+  var cls = kind === 'miss' ? 'miss-flash' : 'bad-flash';
+  var lanes = $('gameLanes').children;
+  if (lanes[track]) lanes[track].classList.add(cls);
+  var keys = $('gameKeys').children;
+  if (keys[track]) keys[track].classList.add(cls);
 }
 
 function recordHit() {
@@ -301,85 +354,32 @@ function recordHit() {
   while (G.cps.length && G.cps[0] < now - 1000) G.cps.shift();
 }
 
-function startTimer() {
+/** 第一颗正确的键按下 → 开始（帧循环一直在跑，这里只是把 started 打开） */
+function startClock() {
   G.started = true;
   G.startTs = Date.now();
   G.lastTap = G.startTs;
   $('readyOverlay').style.display = 'none';
-  if (G.cfg.mode === 'endless') {
-    G.rowHit = false;
-    scheduleFall(1000 / G.speed);
-  }
-  G.timerIv = setInterval(function () {
-    if (!G || G.paused || G.over) return;
-    if (G.cfg.mode === 'timed') {
-      G.timeNum -= 0.01;
-      if (G.timeNum <= 0) { G.timeNum = 0; updateTimer(); endGame(null); return; }
-      updateTimer();
-    } else {
-      G.timeNum += 0.01;          // 无尽模式：显示已坚持时间，速度另用大字号显示
-      updateTimer();
-    }
-  }, 10);
 }
 
-/** 无尽模式的下落节拍：到点检查这一行打没打掉 —— 没打掉就是漏了，直接结束 */
-function fallTick() {
-  if (!G || G.over || !G.running) return;
-  if (G.paused) return;                        // 暂停时挂起，恢复后重新排
-  if (!G.started) return;
-  if (!G.rowHit) {                             // 音符落到判定线以下还没打 → 漏掉
-    G.errors++;
-    playErr();
-    endGame(G.list[G.index] ? G.list[G.index].track : null);
-    return;
-  }
-  // 打掉了：整行上移一格，速度再加一点
-  G.rowHit = false;
-  G.index++; G.rowHits++;
-  moveLayers();
-  G.speed = Math.min(ENDLESS_MAX_SPEED, G.speed * ENDLESS_GROW + ENDLESS_GROW_ADD);
-  updateHud();
-  updateTimer();
-  scheduleFall(1000 / G.speed);
-}
-function scheduleFall(ms) {
-  if (G.fallTimer) clearTimeout(G.fallTimer);
-  G.fallTimer = setTimeout(function () {
-    G.fallTimer = null;
-    G.fallLeft = 0;
-    fallTick();
-  }, Math.max(38, ms));
-  G.fallLeft = Math.max(38, ms);
-}
-/** 暂停/恢复时把下落节拍一起挂起、接上（避免暂停回来瞬间就漏掉一行） */
-function pauseFall() {
-  if (G && G.fallTimer) { clearTimeout(G.fallTimer); G.fallTimer = null; }
-}
-function resumeFall() {
-  if (G && G.cfg.mode === 'endless' && G.started && !G.over) {
-    var left = G.fallLeft && G.fallLeft > 0 ? G.fallLeft : 1000 / G.speed;
-    scheduleFall(left);
-  }
+function timeLeftMs() {
+  return G.cfg.mode === 'timed' ? Math.max(0, G.cfg.timeLimit * 1000 - G.elapsed) : 0;
 }
 
-function updateTimer() {
-  var el = $('hudTimer');
-  if (G.cfg.mode === 'endless') {
-    el.textContent = G.speed ? G.speed.toFixed(2) : '0.00';
-    el.classList.remove('timer-flash');
-    return;
-  }
-  el.textContent = G.timeNum.toFixed(2);
-  el.classList.toggle('timer-flash', G.cfg.mode === 'timed' && G.started && G.timeNum <= 5.99 && !G.over);
-}
 function updateHud() {
+  if (!G) return;
   if (G.cfg.mode === 'endless') {
-    $('hudScore').textContent = G.rowHits;
+    $('hudScore').textContent = G.score;
     $('hudCps').textContent = '速度 ' + (G.speed || 0).toFixed(2) + ' 键/秒';
+    $('hudTimer').classList.add('is-speed');
+    $('hudTimer').classList.remove('timer-flash');
     $('hudTimer').textContent = (G.speed || 0).toFixed(2);
     return;
   }
+  var left = timeLeftMs() / 1000;
+  $('hudTimer').classList.remove('is-speed');
+  $('hudTimer').textContent = left.toFixed(2);
+  $('hudTimer').classList.toggle('timer-flash', G.started && left <= 5.99 && !G.over);
   $('hudScore').textContent = G.score;
   $('hudCps').textContent = cpsNow().toFixed(2) + ' CPS';
 }
@@ -396,44 +396,24 @@ function togglePause(forcePause) {
   var toPause = forcePause != null ? forcePause : !G.paused;
   if (toPause === G.paused) return;
   G.paused = toPause;
-  if (G.paused) { G.pauseStart = Date.now(); pauseFall(); }
-  else if (G.pauseStart != null) {
-    G.pausedMs += Date.now() - G.pauseStart;
-    G.pauseStart = null;
-    resumeFall();
-  }
+  if (G.paused) G.pauseStart = Date.now();
+  else if (G.pauseStart != null) { G.pausedMs += Date.now() - G.pauseStart; G.pauseStart = null; }
   $('pauseOverlay').style.display = G.paused ? 'flex' : 'none';
 }
 
-function endGame(errTrack) {
+function endGame(errTrack, kind) {
   if (G.over) return;
   G.over = true; G.running = false;
-  if (G.timerIv) { clearInterval(G.timerIv); G.timerIv = null; }
-  pauseFall();
+  if (G.raf) { cancelAnimationFrame(G.raf); G.raf = 0; }
   if (G.pauseStart != null) { G.pausedMs += Date.now() - G.pauseStart; G.pauseStart = null; }
-  if (errTrack != null) {        // 点错的那条轨道整列红闪
-    for (var li = 0; li < G.layers.length; li++) {
-      var kids = G.layers[li].children;
-      for (var c = 0; c < kids.length; c++) {
-        if (((kids[c]._idx || 0) % G.cfg.keyCount) === errTrack) kids[c].classList.add('bad-flash');
-      }
-    }
-  }
-  setTimeout(showResult, 1200);
+  flashLane(errTrack, kind);        // 红=按错 / 橙=漏掉
+  setTimeout(showResult, 900);
 }
 
 /** 结算 + 上传排行榜 */
 function showResult() {
-  var d = TC.deviationTime({
-    start: G.startTs || Date.now(),
-    end: Date.now(),
-    pausedMs: G.pausedMs,
-    lastTap: G.lastTap,
-    score: G.score,
-    timeLimit: G.cfg.timeLimit || (G.timeNum * 1000 / 1000)
-  });
   var endless = G.cfg.mode === 'endless';
-  var survived = endless ? d : (G.errors === 0 && G.timeNum <= 0 ? G.cfg.timeLimit * 1000 : d);
+  var survived = G.elapsed;                        // 已进行时间（连续累加，暂停不计）
   var cps = survived > 0 ? (G.score * 1000 / survived) : 0;
   var finalSpeed = endless ? (G.speed || 0) : 0;
   $('resTitle').textContent = endless ? '跟不上了！' : (G.errors > 0 ? '点错了，对局结束' : '时间到！');
@@ -514,7 +494,7 @@ function applySkin(skin, persist) {
   // 清掉内存里的旧音频池
   audioPool.hit = []; audioPool.err = [];
   refreshSkinNowLine();
-  if (G && G.layers) applyLayout();      // 对局中换肤（暂停时）立即生效
+  if (G && G.metrics) applyLayout();      // 对局中换肤（暂停时）立即生效
   if ($('skinMask').style.display !== 'none') renderPreview();
 }
 function refreshSkinNowLine() {
@@ -749,7 +729,8 @@ function bindMenu() {
   $('btnBackMenu').onclick = function () { mask('resultMask', false); show('scr-menu'); };
   $('btnPause').onclick = function () { togglePause(); };
   $('btnQuit').onclick = function () {
-    if (G && !G.over) { G.over = true; G.running = false; if (G.timerIv) clearInterval(G.timerIv); }
+    if (G && !G.over) { G.over = true; G.running = false; if (G.raf) { cancelAnimationFrame(G.raf); G.raf = 0; } }
+    $('pauseOverlay').style.display = 'none';
     show('scr-menu');
   };
   $('pauseOverlay').onclick = function () { togglePause(false); };
@@ -769,7 +750,10 @@ function bindLayout() {
     WB.ui.toast('布局已保存', 'ok');
   };
   $('layReset').onclick = function () {
-    S.layout = loadLayout(); S.layout = { width: 60, block: 100, judge: 0, showKeys: true, keysMap: {} };
+    S.layout = {
+      width: DEFAULT_LAYOUT.width, block: DEFAULT_LAYOUT.block, judge: DEFAULT_LAYOUT.judge,
+      showKeys: DEFAULT_LAYOUT.showKeys
+    };
     saveJson('dili.layout', S.layout);
     openLayout();
   };
@@ -844,29 +828,78 @@ function bindInput() {
       mask('resultMask', false); startGame(); return;
     }
     if (!$('scr-game') || $('scr-game').style.display === 'none') return;
-    if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); togglePause(); return; }
-    if (G && !G.over && !G.paused) {
-      var codes = trackCodes(S.keys);
-      var track = codes.indexOf(e.code);
-      if (track !== -1) { e.preventDefault(); handleHit(track); }
-    }
+    if (e.repeat) return;                          // 长按/连发不算——否则自动重复会被当成连击，出现"莫名其妙失败"
+    if (!G || G.over) return;
+    if ($('pauseOverlay').style.display !== 'none') { e.preventDefault(); togglePause(false); return; }
+    if (e.code === 'Escape') { e.preventDefault(); togglePause(); return; }
+    // 轨道键优先：5K 的中间轨本身就是空格，不能先被"空格=暂停"截走
+    var track = trackCodes(S.keys).indexOf(e.code);
+    if (track !== -1) { e.preventDefault(); handleHit(track); return; }
+    if (e.code === 'Space') { e.preventDefault(); togglePause(); }
   });
   $('gameViewport').addEventListener('pointerdown', function (e) {
-    if (G && !G.over && !G.paused && !$('readyOverlay') ) { /* ready 时也允许点（第一下开始） */ }
+    if (!G || G.over || G.paused) return;
+    if (e.target && e.target.closest && e.target.closest('.game-hud')) return;   // 点 HUD 上的按钮不算判定
     var inner = $('gameInner').getBoundingClientRect();
-    var track = Math.floor((e.clientX - inner.left) / G.blockSize);
+    var track = Math.floor((e.clientX - inner.left) / G.metrics.blockSize);
     if (track < 0) track = 0;
     if (track >= S.keys) track = S.keys - 1;
     handleHit(track);
   });
 }
 
-/** 主页键位显示：跟随当前键数，设置里改了立即刷新 */
+/* ================= 主页键位：点一下就能改键 =================
+ * 与右上角 ⚙ 设置里的键位表读写同一份数据（WB.settings.keymaps.dili），
+ * 所以在哪儿改都会立即同步；save() 会 dispatch wb:settings → renderKeyHint 重画。
+ */
+/** 当前键数对应的平台玩家 id（4K→p4k、5K→p5k、6K→p6k） */
+function currentPid() { return ['p4k', 'p5k', 'p6k'][KEY_PLAYER[S.keys] || 0]; }
+
+/** 主页键位显示：4K 显示 4 个键、5K 显示 5 个、6K 显示 6 个；每个键点一下即可改 */
 function renderKeyHint() {
   var el = $('keyHint');
   if (!el) return;
-  el.innerHTML = '键位：<b>' + trackLabels(S.keys).map(function (t) { return esc(t); }).join('</b> <b>') + '</b>' +
-    ' <span class="dim small">（在右上角 ⚙ 设置里可改）</span>';
+  var map = WB.settings.keysFor('dili', KEY_PLAYER[S.keys] || 0) || {};
+  var html = '键位：';
+  for (var i = 0; i < S.keys; i++) {
+    var code = map['t' + (i + 1)];
+    html += '<button type="button" class="key-btn" data-track="' + i + '" title="点一下，再按新键即可修改">' +
+      esc(codeLabel(code)) + '</button>';
+  }
+  el.innerHTML = html + ' <span class="dim small">（点一下就能改键 · 也可在右上角 ⚙ 设置里改）</span>';
+  var btns = el.querySelectorAll('.key-btn');
+  for (var b = 0; b < btns.length; b++) btns[b].onclick = function () { captureKey(this); };
+}
+
+/** 主页改键：抓一次按键写进平台设置（设置弹窗 / 开局键位提示会同步刷新） */
+function captureKey(btn) {
+  if (S.capturing) return;
+  S.capturing = true;
+  var track = Number(btn.getAttribute('data-track'));
+  var old = btn.textContent;
+  btn.classList.add('capturing');
+  btn.textContent = '按新键…';
+  WB.keys.capture(function (code) {
+    S.capturing = false;
+    btn.classList.remove('capturing');
+    btn.textContent = old;
+    if (!code) return;                       // Esc 取消
+    var pid = currentPid();
+    var action = 't' + (track + 1);
+    var conflict = WB.settings.conflict('dili', pid, action, code);
+    if (conflict) {
+      var label = conflict;
+      WB.settings.actionsFor('dili', pid).forEach(function (x) { if (x.k === conflict) label = x.label; });
+      WB.ui.toast('该键已被「' + label + '」占用', 'err');
+      return;
+    }
+    var s = WB.settings.get();
+    if (!s.keymaps.dili) s.keymaps.dili = {};
+    if (!s.keymaps.dili[pid]) s.keymaps.dili[pid] = {};
+    s.keymaps.dili[pid][action] = code;
+    WB.settings.save();
+    WB.ui.toast('键位已更新', 'ok');
+  });
 }
 
 /* ================= 菜单背景：游戏画面 ================= */
@@ -917,7 +950,7 @@ function boot() {
   }, 6000);
   // 实时数据：连接一好就拉榜单和广场
   S.net.on('hello', function () { refreshBoard(); S.net.send({ t: 'dili.skin.list' }); });
-  window.addEventListener('resize', function () { if (G && G.layers && !$('scr-game').style.display) applyLayout(); });
+  window.addEventListener('resize', function () { if (G && G.metrics && !$('scr-game').style.display) applyLayout(); });
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
