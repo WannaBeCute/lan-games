@@ -513,6 +513,20 @@ function validateTests() {
       v.ok && r.ok,
       v.ok ? ('最快 ' + r.time.toFixed(1) + 's') : v.errors.join('；'));
   });
+
+  console.log('\n== B4. 关卡合集（collections）结构 ==');
+  const colls = PACK.collections;
+  ok('关卡包带 collections 元数据', Array.isArray(colls) && colls.length >= 1, (colls || []).length + ' 个合集');
+  const basic = (colls || []).filter(c => c.id === 'basic')[0];
+  ok('「基础关卡」合集存在且固定 + 关卡制', !!basic && basic.fixed === true && basic.progressive === true && basic.name === '基础关卡');
+  const ids = new Set(PACK.levels.map(l => String(l.id)));
+  const badRef = (colls || []).reduce((acc, c) => acc.concat((c.levels || []).filter(id => !ids.has(String(id))).map(id => c.id + ':' + id)), []);
+  ok('合集引用的关卡 id 全部存在', badRef.length === 0, badRef.join(',') || '无悬空引用');
+  const dup = {};
+  (colls || []).forEach(c => { dup[c.id] = (dup[c.id] || 0) + 1; });
+  ok('合集 id 不重复', Object.keys(dup).every(k => dup[k] === 1));
+  ok('「基础关卡」覆盖全部 10 个内置关', !!basic && basic.levels.length === PACK.levels.length &&
+    PACK.levels.every(l => basic.levels.map(String).indexOf(String(l.id)) >= 0), (basic ? basic.levels.length : 0) + '/' + PACK.levels.length);
 }
 
 /* ================================================================

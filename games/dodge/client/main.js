@@ -967,29 +967,180 @@
     $('lobbyFootTip').textContent = '玩法：全员到达终点才算通关；已到达的队友可按接应键拉队友一把。';
   }
 
+  /* ---------- 合集管理（用户自建合集，只存本机浏览器） ---------- */
+  function persistUserColls() {
+    var list = (S.collections || []).filter(function (c) { return !c.fixed && !c.server; }).map(function (c) {
+      return { id: c.id, name: c.name, levelIds: c.levels.map(function (lv) { return lv.id; }) };
+    });
+    saveColls(list);
+  }
+  function collNameTaken(name) {
+    return (S.collections || []).some(function (c) { return c.name === name; });
+  }
+  function addCollection() {
+    var name = (window.prompt('新合集的名字：', '我的合集') || '').trim();
+    if (!name) return;
+    if (name === '基础关卡' || name === '自制关卡') { WB.ui.toast('这个名字是固定合集专用的，换一个吧', 'err'); return; }
+    if (collNameTaken(name)) { WB.ui.toast('已经有同名的合集了', 'err'); return; }
+    var list = loadColls();
+    list.push({ id: 'u' + Date.now(), name: name, levelIds: [] });
+    saveColls(list);
+    buildCollections(S.pack);
+    renderLevelGrid();
+    WB.ui.toast('合集「' + name + '」建好了：去「自制关卡」里把关卡收进来', 'ok');
+  }
+  function renameCollection(coll) {
+    var name = (window.prompt('合集改名：', coll.name) || '').trim();
+    if (!name || name === coll.name) return;
+    if (name === '基础关卡' || name === '自制关卡') { WB.ui.toast('这个名字是固定合集专用的，换一个吧', 'err'); return; }
+    if (collNameTaken(name)) { WB.ui.toast('已经有同名的合集了', 'err'); return; }
+    coll.name = name;
+    persistUserColls();
+    renderLevelGrid();
+  }
+  function deleteCollection(coll) {
+    if (!window.confirm('删除合集「' + coll.name + '」？里面的 ' + coll.levels.length + ' 个关卡会回到「自制关卡」合集（关卡本身不会被删）。')) return;
+    var list = loadColls().filter(function (c) { return String(c.id) !== String(coll.id); });
+    saveColls(list);
+    buildCollections(S.pack);
+    renderLevelGrid();
+    WB.ui.toast('合集已删除，关卡回到了「自制关卡」');
+  }
+  /** 把关卡收进用户自建合集（从「自制关卡」合集出发） */
+  function moveLevelToColl(lv) {
+    var targets = (S.collections || []).filter(function (c) { return !c.fixed && !c.server; });
+    if (!targets.length) { WB.ui.toast('还没有自建合集：先点本页底部的「新建合集」', 'err'); return; }
+    var target = targets[0];
+    if (targets.length > 1) {
+      var menu = targets.map(function (c, i) { return (i + 1) + '. ' + c.name; }).join('\n');
+      var pick = parseInt(window.prompt('把「' + lv.name + '」收进哪个合集？输入序号：\n' + menu, '1'), 10);
+      if (!(pick >= 1 && pick <= targets.length)) return;
+      target = targets[pick - 1];
+    }
+    var list = loadColls();
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].id) === String(target.id)) {
+        list[i].levelIds = list[i].levelIds || [];
+        if (list[i].levelIds.map(String).indexOf(String(lv.id)) < 0) list[i].levelIds.push(lv.id);
+      }
+    }
+    saveColls(list);
+    buildCollections(S.pack);
+    renderLevelGrid();
+    WB.ui.toast('已把「' + lv.name + '」收进合集「' + target.name + '」', 'ok');
+  }
+  /** 把关卡从自建合集移回「自制关卡」合集 */
+  function removeLevelFromColl(lv) {
+    var list = loadColls();
+    list.forEach(function (c) { c.levelIds = (c.levelIds || []).filter(function (id) { return String(id) !== String(lv.id); }); });
+    saveColls(list);
+    buildCollections(S.pack);
+    renderLevelGrid();
+    WB.ui.toast('已把「' + lv.name + '」移回「自制关卡」合集');
+  }
+
   function renderLevelGrid() {
     var grid = $('levelGrid');
     grid.textContent = '';
     var prog = loadProgress();
-    allLevels().forEach(function (lv, i) {
-      var key = levelKey(lv);
-      var locked = !lv.custom && (i + 1) > prog.unlocked;
-      var card = document.createElement('button');
-      card.className = 'level-card' + (locked ? ' locked' : '') + (lv.custom ? ' custom' : '');
-      var best = prog.best[key];
-      card.innerHTML =
-        '<div class="no">' + (lv.custom ? '自制' : ('第 ' + (i + 1) + ' 关')) + (locked ? ' · 未解锁' : '') + '</div>' +
-        '<div class="nm">' + esc(lv.name) + '</div>' +
-        '<div class="stars">' + difficultyStars(lv.difficulty) + '</div>' +
-        '<div class="best">' + (best ? ('最好：' + best.deaths + ' 次死亡 / ' + best.time.toFixed(1) + 's') : '还没通关') + '</div>';
-      if (!locked) {
-        card.onclick = function () {
-          WB.audio.play('click');
-          startLocalGame(i, 1);
-        };
+    var flat = allLevels();
+
+    (S.collections || []).forEach(function (coll) {
+      var sec = document.createElement('div');
+      sec.className = 'coll-sec';
+
+      // 标题行：合集名 + 类型标签 + 操作（固定合集不给删/改；关卡制合集的关卡没有任何操作）
+      var head = document.createElement('div');
+      head.className = 'coll-head';
+      var title = document.createElement('span');
+      title.className = 'coll-name';
+      title.textContent = coll.name;
+      head.appendChild(title);
+      var tag = document.createElement('span');
+      tag.className = 'coll-tag';
+      if (coll.progressive) {
+        var done = coll.levels.filter(function (lv) { return prog.best[levelKey(lv)]; }).length;
+        tag.textContent = '关卡制 · 逐关解锁（已通 ' + done + ' / ' + coll.levels.length + '）';
+      } else if (coll.fixed) {
+        tag.textContent = '固定合集 · 自由玩';
+      } else {
+        tag.textContent = '自建合集 · 只存在这台电脑';
       }
-      grid.appendChild(card);
+      head.appendChild(tag);
+      if (coll.fixed) {
+        var lockTag = document.createElement('span');
+        lockTag.className = 'coll-tag dim';
+        lockTag.textContent = '不可删除 / 改名';
+        head.appendChild(lockTag);
+      } else if (!coll.server) {
+        var rn = document.createElement('button');
+        rn.className = 'btn tiny ghost';
+        rn.textContent = '改名';
+        rn.onclick = function () { renameCollection(coll); };
+        head.appendChild(rn);
+        var del = document.createElement('button');
+        del.className = 'btn tiny danger';
+        del.textContent = '删除合集';
+        del.onclick = function () { deleteCollection(coll); };
+        head.appendChild(del);
+      }
+      sec.appendChild(head);
+
+      // 关卡网格
+      var body = document.createElement('div');
+      body.className = 'level-grid';
+      coll.levels.forEach(function (lv, k) {
+        var key = levelKey(lv);
+        var locked = levelLocked(lv, prog);
+        var card = document.createElement('button');
+        card.className = 'level-card' + (locked ? ' locked' : '') + (lv.custom ? ' custom' : '');
+        var best = prog.best[key];
+        card.innerHTML =
+          '<div class="no">' + (lv.custom ? '自制' : ('第 ' + (k + 1) + ' 关')) + (locked ? ' · 🔒 未解锁' : '') + '</div>' +
+          '<div class="nm">' + esc(lv.name) + '</div>' +
+          '<div class="stars">' + difficultyStars(lv.difficulty) + '</div>' +
+          '<div class="best">' + (best ? ('最好：' + best.deaths + ' 次死亡 / ' + best.time.toFixed(1) + 's') : '还没通关') + '</div>';
+        if (!locked) {
+          card.onclick = function () {
+            WB.audio.play('click');
+            startLocalGame(flat.indexOf(lv), 1);
+          };
+        }
+        // 自由合集里的自制关卡可以移动；关卡制合集不给任何操作（改删移都没有）
+        if (lv.custom && !coll.progressive) {
+          var mv = document.createElement('span');
+          mv.className = 'lv-op';
+          if (coll.id === 'custom') {
+            mv.textContent = '📥 收进合集';
+            mv.title = '把这个关卡收进某个自建合集';
+            mv.onclick = function (e) { e.stopPropagation(); moveLevelToColl(lv); };
+          } else {
+            mv.textContent = '📤 移出合集';
+            mv.title = '移回「自制关卡」合集';
+            mv.onclick = function (e) { e.stopPropagation(); removeLevelFromColl(lv); };
+          }
+          card.appendChild(mv);
+        }
+        body.appendChild(card);
+      });
+      if (!coll.levels.length) {
+        var empty = document.createElement('div');
+        empty.className = 'coll-empty dim small';
+        empty.textContent = coll.id === 'custom'
+          ? '还没有自制关卡：去「关卡编辑器」做一个，保存后会出现在这里'
+          : '合集还是空的：去「自制关卡」合集里点关卡上的「收进合集」';
+        body.appendChild(empty);
+      }
+      sec.appendChild(body);
+      grid.appendChild(sec);
     });
+
+    // 末尾：新建合集入口（默认自由开放，用户可随意改）
+    var add = document.createElement('button');
+    add.className = 'btn ghost block coll-add';
+    add.textContent = '＋ 新建合集（自由开放，只存在这台电脑）';
+    add.onclick = addCollection;
+    grid.appendChild(add);
   }
 
   function renderLocalSetup() {
@@ -998,9 +1149,11 @@
     var prog = loadProgress();
     allLevels().forEach(function (lv, i) {
       var b = document.createElement('button');
-      var locked = !lv.custom && (i + 1) > prog.unlocked;
+      var locked = levelLocked(lv, prog);
+      var coll = lv._coll;
+      var idx = coll ? coll.levels.indexOf(lv) : i;
       b.className = 'lv-pick' + (i === (S.localPick || 0) ? ' on' : '') + (locked ? ' locked' : '');
-      b.textContent = (locked ? '🔒 ' : '') + (lv.custom ? '自制 ' : '') + (i + 1) + '. ' + lv.name;
+      b.textContent = (locked ? '🔒 ' : '') + (coll ? coll.name + ' ' : '') + (idx + 1) + '. ' + lv.name;
       if (!locked) {
         b.onclick = function () {
           WB.audio.play('click');
@@ -1018,9 +1171,11 @@
 
   function renderBestLine() {
     var prog = loadProgress();
-    var cleared = S.levels.filter(function (lv, i) { return prog.best['builtin:' + lv.id]; }).length;
+    var basic = (S.collections || []).filter(function (c) { return c.id === 'basic'; })[0];
+    var list = basic ? basic.levels : S.levels;
+    var cleared = list.filter(function (lv) { return prog.best['builtin:' + lv.id]; }).length;
     $('bestLine').textContent = cleared
-      ? ('已通关 ' + cleared + ' / ' + S.levels.length + ' 关 · 下次从第 ' + Math.min(prog.unlocked, S.levels.length) + ' 关继续')
+      ? ('已通关 ' + cleared + ' / ' + list.length + ' 关 · 下次从第 ' + Math.min(prog.unlocked, list.length) + ' 关继续')
       : '还没通关记录，从第 1 关开始吧';
   }
 
