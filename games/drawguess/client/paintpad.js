@@ -80,6 +80,8 @@
     { id: 'line', label: '直线' },
     { id: 'rect', label: '矩形' },
     { id: 'ellipse', label: '圆形' },
+    { id: 'triangle', label: '三角形' },
+    { id: 'arc', label: '弧线' },
     { id: 'arrow', label: '箭头' }
   ];
 
@@ -106,6 +108,8 @@
     line: '<path d="M4.5 19.5L19.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
     rect: '<rect x="4.5" y="5.5" width="15" height="13" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     ellipse: '<circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+    triangle: '<path d="M12 4.6L20.2 19.4H3.8L12 4.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+    arc: '<path d="M4 18.6C6.2 9.4 17.8 9.4 20 18.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
     arrow: '<path d="M4.5 19.5L19.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12.5 4.5h7v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
     undo: '<path d="M8 8H15.5a4.5 4.5 0 0 1 0 9H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11 4.5L7.5 8l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
     redo: '<path d="M16 8H8.5a4.5 4.5 0 0 0 0 9H15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13 4.5L16.5 8 13 11.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -551,7 +555,7 @@
     this.shapeFillBox.type = 'checkbox';
     this.shapeFillBox.onchange = function () { self.shapeFill = self.shapeFillBox.checked; };
     fillToggle.appendChild(this.shapeFillBox);
-    fillToggle.appendChild(mk('span', null, '矩形/圆形填充'));
+    fillToggle.appendChild(mk('span', null, '矩形/圆形/三角形填充'));
     secShape.appendChild(fillToggle);
     side.appendChild(secShape);
 
@@ -1052,6 +1056,23 @@
       }
       return [pts];
     }
+    if (sh.s === 'triangle') return [[
+      { x: (x0 + x1) / 2, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: (x0 + x1) / 2, y: y0 }
+    ]];
+    if (sh.s === 'arc') {
+      // 弧线：包住包围盒，从左上到右上向上拱一道。用二次贝塞尔采样成折线，
+      // 这样任意笔刷（铅笔/马克笔/炭笔…）描出来的手感都和直线一致。
+      var a0x = x0, a0y = y1, a1x = x1, a1y = y1, ccx = (x0 + x1) / 2, ccy = y0;
+      var arc = [];
+      for (var k = 0; k <= 18; k++) {
+        var t = k / 18, mt = 1 - t;
+        arc.push({
+          x: mt * mt * a0x + 2 * mt * t * ccx + t * t * a1x,
+          y: mt * mt * a0y + 2 * mt * t * ccy + t * t * a1y
+        });
+      }
+      return [arc];
+    }
     // arrow
     var ang = Math.atan2(y1 - y0, x1 - x0);
     var head = Math.max(Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) * 0.24, 8);
@@ -1075,13 +1096,21 @@
     var alpha = sh.a != null ? sh.a : 1;
     var seed = hashStr('shape' + (sh.s || 'line') + bid + Math.round(sh.x0 * 1000) + Math.round(sh.y0 * 1000));
 
-    // 填充先铺底（用同样的颜色，按当前不透明度）
-    if (sh.f && (sh.s === 'rect' || sh.s === 'ellipse')) {
-      ctx.globalAlpha = alpha * 0.9;
+    // 填充先铺底：**和描边同一个颜色、同一个不透明度**
+    // （以前这里是 alpha * 0.9，填充比边框淡一档，看起来"里面的颜色和边框不一样"）
+    if (sh.f && (sh.s === 'rect' || sh.s === 'ellipse' || sh.s === 'triangle')) {
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = sh.c;
       if (sh.s === 'rect') {
         var rx = Math.min(sh.x0, sh.x1) * W, ry = Math.min(sh.y0, sh.y1) * H;
         ctx.fillRect(rx, ry, Math.abs(sh.x1 - sh.x0) * W, Math.abs(sh.y1 - sh.y0) * H);
+      } else if (sh.s === 'triangle') {
+        var tp = shapePaths({ s: 'triangle', x0: sh.x0, y0: sh.y0, x1: sh.x1, y1: sh.y1 }, W, H)[0];
+        ctx.beginPath();
+        ctx.moveTo(tp[0].x, tp[0].y);
+        for (var ti = 1; ti < tp.length; ti++) ctx.lineTo(tp[ti].x, tp[ti].y);
+        ctx.closePath();
+        ctx.fill();
       } else {
         ctx.beginPath();
         ctx.ellipse((sh.x0 + sh.x1) / 2 * W, (sh.y0 + sh.y1) / 2 * H,
@@ -1188,9 +1217,20 @@
    *   大家的画布尺寸不一样（窗口大小不同），如果各按自己的分辨率做漫水填充，
    *   一条 4px 的线在 946 宽下是闭合的、在 696 宽下可能被抗锯齿切出一个缝，
    *   点还可能正好落在线上——于是画者填得好好的，猜者那边就填花了。
-   *   做法：统一把画面降到 REF 宽的「参考分辨率」再算，然后把 mask 放大回去。
+   *   做法：统一按「逻辑分辨率」把画面重采样一次再算，然后把 mask 放大回去。
    */
-  var FILL_REF = 512;
+  /**
+   * 计算填色遮罩时的上限（**逻辑像素 / CSS 像素**，不是设备像素）。
+   *
+   * 为什么必须按逻辑分辨率算：画布位图大小 = CSS 尺寸 × devicePixelRatio，
+   * 而窗口一全屏、CSS 尺寸又会变大。以前这里用的是**设备像素**、上限还卡在 512，
+   * 于是同一个点击在不同窗口大小 / 不同 dpr 下会得到**不同的填色范围**：
+   *   全屏后重采样压得更狠，细线被"糊"掉 → 漫水填充从缝里漏出去，整片区域变大，
+   *   看起来就和实际线条错位；同时下面的"边缘扩张"是按遮罩像素膨胀的，也跟着忽大忽小。
+   * 按逻辑分辨率算之后，线宽在遮罩里始终等于它在画纸上的 CSS 像素宽，
+   * 画者/猜者、不同窗口大小算出来的填色范围也就一致了。
+   */
+  var FILL_REF = 1280;
 
   /** 起点微调：在点击处附近取"出现最多的颜色"，再从最近的地方起填。
    *  这样即使点偏一点点压在线上，也能填到该填的区域里。 */
@@ -1218,7 +1258,10 @@
     var tol = op.tol == null ? 45 : op.tol;
     var edge = op.e == null ? this.edge : op.e;
 
-    var rw = Math.min(FILL_REF, Math.max(16, W));
+    // 按逻辑（CSS）分辨率算遮罩：这样"窗口多大 / dpr 多少"都不影响填出来的范围。
+    // 注意 W 是设备像素，要除掉 dpr 才是画纸在屏幕上看起来的大小。
+    var cssW = Math.max(1, Math.round(this.cssW || (W / (this.dpr || 1))));
+    var rw = Math.min(FILL_REF, Math.max(16, cssW));
     var rh = Math.max(8, Math.round(rw * H / Math.max(1, W)));
     var small = newCanvas(rw, rh), sctx = ctxOf(small);
     sctx.imageSmoothingEnabled = true;
@@ -1231,7 +1274,9 @@
     var res = floodFill(sd, rw, rh, seed.x, seed.y, tol);
     if (!res.count) return;
     if (res.count > rw * rh * 0.85) this.onNotice('这一片没有封闭起来，整张都填上了', 'warn');
-    var dil = Math.round(clamp(edge, 0, 6));
+    // 「边缘扩张」是画纸上的像素：遮罩被重采样过就要按比例换算，
+    // 否则同一个设置在全屏前后扩张出来的宽度不一样（看起来就是填色范围忽大忽小）
+    var dil = Math.round(clamp(edge, 0, 6) * (rw / cssW));
     if (dil > 0) dilate(res.mask, rw, rh, dil);
 
     var mask = newCanvas(rw, rh), mctx = ctxOf(mask);

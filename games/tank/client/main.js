@@ -606,19 +606,37 @@
     var sig = (inp.up ? 1 : 0) + '' + (inp.down ? 1 : 0) + (inp.left ? 1 : 0) + (inp.right ? 1 : 0) + (inp.fire ? 1 : 0);
     if (sig !== o.lastSig || S.now - o.lastSent > 0.3) {
       o.lastSig = sig; o.lastSent = S.now;
-      S.net.send({ t: 'tank.input', up: inp.up, down: inp.down, left: inp.left, right: inp.right, fire: inp.fire });
+      // a = 我此刻看到的炮管角度：服务端开火以它为准，子弹方向才和视觉炮管一致
+      S.net.send({ t: 'tank.input', up: inp.up, down: inp.down, left: inp.left, right: inp.right, fire: inp.fire, a: o.me ? o.me.angle : 0 });
     }
 
     // 本地预测自己的坦克（服务端权威 + 客户端即时响应）
     if (o.me) {
       if (o.me.alive && o.freeze <= 0) {
+        /*
+         * 预测必须踩和服务端一样的步子（1/60），不能直接用本机帧间隔：
+         * moveTank 会把一帧的移动切成 0.6px 的子步，帧长不同 → 切法不同。
+         * 顶着凸出来的墙角滑行时，切法不同会算出**不同的停靠轨迹**，
+         * 和服务端差出 0.5px 上下；快照（30Hz）一到就把预测位置往回拽 35%，
+         * 下一帧预测又推回去 —— 就是顶墙角时甩不掉的抖动，炮口跟着晃、
+         * 子弹看着像打偏。rAF 本身也有毫秒级抖动（144Hz 更明显），
+         * 所以把帧时间攒进 predAcc，凑够一个服务端帧长才动一步：
+         * 两边积分步完全一致，轨迹逐比特对齐，err 恒≈0。
+         */
+        o.predAcc = Math.min((o.predAcc || 0) + dt, 4 / 60);   // 卡顿后最多追 4 步，防死亡螺旋
         var snap = o.buf[o.buf.length - 1];
+        var pw = proxyWorld(o, snap);
         var mt = {
           id: o.myTankId, x: o.me.x, y: o.me.y, angle: o.me.angle,
           power: o.me.power || {}, input: inp
         };
-        TC.moveTank(proxyWorld(o, snap), mt, dt);
+        while (o.predAcc >= 1 / 60) {
+          TC.moveTank(pw, mt, 1 / 60);
+          o.predAcc -= 1 / 60;
+        }
         o.me.x = mt.x; o.me.y = mt.y; o.me.angle = mt.angle;
+      } else {
+        o.predAcc = 0;                    // 冻结/阵亡期间别攒步数，恢复时不会猛冲
       }
     }
   }
@@ -785,10 +803,13 @@
       if (t === 'life') return;                 // 加命是即时生效的，没有持续时间，不进列表
       var v = p[t] || 0;
       if (v <= 0) return;
-      var max = TC.DURATION[t] || 18;
+      // 穿甲弹是"发数"，其它是"秒数"：进度条和文字都要分开算，别拿秒数去比
+      var isAP = (t === 'power');
+      var max = isAP ? (TC.AP_ROUNDS || 3) : (TC.DURATION[t] || 18);
       // 激光是一次性的，写"×1（射完失效）"比倒计时更能说明问题
-      var right = t === 'shield' ? ('挡 1 发 · ' + Math.ceil(v) + 's')
-        : (t === 'laser' ? ('×1 · ' + Math.ceil(v) + 's 内有效') : (Math.ceil(v) + 's'));
+      var right = isAP ? ('剩 ' + (v | 0) + ' 发')
+        : (t === 'shield' ? ('挡 1 发 · ' + Math.ceil(v) + 's')
+        : (t === 'laser' ? ('×1 · ' + Math.ceil(v) + 's 内有效') : (Math.ceil(v) + 's')));
       // 图标 + 名称 + 一句话作用 + 剩余时间（不用悬停也能看懂）
       items.push('<li>' +
         '<span class="pu-main">' +
@@ -928,6 +949,7 @@
 
   function quitToMenu() {
     if (S.mode === 'online') S.net.send({ t: 'tank.leave' });
+    WB.me.forgetRoom('tank');   // 明确离开了，别再自动回房
     S.mode = null; S.world = null; S.me = null; S.paused = false;
     S.local = null; S.single = null; S.fx = [];
     S.online = null;          // 下次进联机会重新建会话
@@ -1034,12 +1056,22 @@
       var rd = m.isHost
         ? '<span class="rd host">房主 · 已就绪</span>'
         : (m.ready ? '<span class="rd ok">✔ 已准备</span>' : '<span class="rd no">未准备</span>');
+      // 我是房主时，其他成员行内给出「转让房主」小按钮
+      var give = (isHost && !isMe)
+        ? '<button class="btn tiny ghost give-host" data-id="' + m.id + '" title="把房主转让给 TA">转让房主</button>'
+        : '';
       return '<li class="' + (isMe ? 'me' : '') + '">' +
         '<span class="dot" style="background:' + esc(m.color) + '"></span>' +
         '<span class="nm">' + esc(m.name) + (isMe ? '（我）' : '') + '</span>' +
-        rd +
+        rd + give +
         '<span class="st">胜 ' + m.wins + ' · 杀 ' + m.kills + '</span></li>';
     }).join('');
+    Array.prototype.forEach.call($('playerList').querySelectorAll('.give-host'), function (b) {
+      b.onclick = function () {
+        S.net.send({ t: 'tank.giveHost', target: Number(b.dataset.id) });
+        WB.audio.play('click');
+      };
+    });
 
     if (me) { lobbyColor = me.color; lobbyStyle = me.style; renderLobbyConfig(); }
 
@@ -1112,9 +1144,35 @@
   }
 
   /* ================= 网络 ================= */
+  /**
+   * 本标签页的稳定身份钥匙（平台层 WB.me 提供）。
+   * 平台每次连接都给新 id —— 于是"刷新一下"在服务端看来就是新玩家：
+   * 房间被当成掉线销毁，刚发出去的房间号就失效了（其他人加不进来），
+   * 重建一个又好了。带上这把钥匙，服务端才能把座位/比分原样还给你。
+   */
+  var ME_KEY = WB.me.key();
+
   function initNet() {
     S.net = new WB.Net();
     WB.bindNetBadge($('netBadge'), S.net);
+
+    /*
+     * 连上就试着「回到我的房间」：
+     * 刷新页面 / 断线重连后自动把座位接回来（对局中也照收），
+     * 不用重新输房间号，也不会把房间弄丢。
+     */
+    S.net.on('hello', function () {
+      if (!WB.me.recallRoom('tank')) return;
+      S.net.send({ t: 'tank.resume', key: ME_KEY });
+    });
+    S.net.on('tank.resumeFailed', function () {
+      WB.me.forgetRoom('tank');     // 房间确实已经没了，别每次刷新都白试一遍
+    });
+    // 屋里有人掉线：先提示，别急着结束（他还有宽限期）
+    S.net.on('tank.dropped', function (m) {
+      WB.ui.toast((m && m.msg) || '有玩家掉线了', 'err');
+      WB.audio.play('error');
+    });
 
     /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
     WB.Friends.boot(S.net);
@@ -1140,25 +1198,31 @@
         if (!/^\d{4}$/.test(code)) { WB.ui.toast('邀请信息不完整', 'err'); WB.audio.play('error'); return; }
         if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
         WB.ui.toast('正在加入好友的房间 ' + code + '…', 'ok');
-        S.net.send({ t: 'tank.join', code: code });
+        S.net.send({ t: 'tank.join', code: code, key: ME_KEY });
       }
     });
 
     S.net.on('tank.created', function (m) {
       WB.audio.play('click');
       WB.ui.toast('房间已创建：' + m.code, 'ok');
+      WB.me.rememberRoom('tank', m.code);       // 刷新后能自己回来
       WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
       show('scr-lobby');
       renderLobbyKeys();
       renderLobbyConfig();
     });
     S.net.on('tank.joined', function (m) {
-      WB.ui.toast((S.autoJoinNote === m.code ? '已通过好友邀请加入房间：' : '已加入房间：') + m.code, 'ok');
+      WB.ui.toast(m.resumed ? ('已回到房间：' + m.code)
+        : ((S.autoJoinNote === m.code ? '已通过好友邀请加入房间：' : '已加入房间：') + m.code), 'ok');
       S.autoJoinNote = null;
+      WB.me.rememberRoom('tank', m.code);
       WB.Chat.enterRoom({ game: 'tank', code: m.code, title: '坦克大战 · 房间 ' + m.code });
-      show('scr-lobby');
-      renderLobbyKeys();
-      renderLobbyConfig();
+      // 对局中回来时，服务端随后会补发本局场景直接进画面，别把人按回大厅
+      if (!(S.online && S.online.running)) {
+        show('scr-lobby');
+        renderLobbyKeys();
+        renderLobbyConfig();
+      }
     });
     S.net.on('tank.room', function (m) {
       // 刷新页面后回到同一房间：把聊天频道也接回来
@@ -1167,6 +1231,7 @@
       else { S.room = m; WB.Friends.refreshGame(); }   // 开局了 → 不能再邀人进这个房间
     });
     S.net.on('tank.error', function (m) { WB.ui.toast(m.msg || '操作失败', 'err'); WB.audio.play('error'); });
+    S.net.on('tank.host', function (m) { WB.ui.toast('房主已转让给 ' + (m.name || '其他玩家'), 'ok'); });
     S.net.on('tank.playerLeft', function (m) { WB.ui.toast((m.name || '玩家') + ' 离开了房间'); });
     // 对局中有人退出：整场结束，直接回主页（服务器已回收房间）
     S.net.on('tank.abort', function (m) {
@@ -1284,7 +1349,7 @@
     $('btnCreateRoom').onclick = function () {
       WB.audio.play('click');
       if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
-      S.net.send({ t: 'tank.create' });
+      S.net.send({ t: 'tank.create', key: ME_KEY });
     };
     $('btnJoinRoom').onclick = doJoinRoom;
     $('joinCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoinRoom(); });
@@ -1392,7 +1457,7 @@
     if (!/^\d{4}$/.test(code)) { WB.ui.toast('请输入 4 位数字房间号', 'err'); WB.audio.play('error'); return; }
     if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
     WB.audio.play('click');
-    S.net.send({ t: 'tank.join', code: code });
+    S.net.send({ t: 'tank.join', code: code, key: ME_KEY });
   }
 
   /* ================= 启动 ================= */
@@ -1409,7 +1474,7 @@
     var code = String((data && data.room) || '').trim();
     if (!/^\d{4}$/.test(code)) return;
     S.autoJoinNote = code;
-    S.net.send({ t: 'tank.join', code: code });
+    S.net.send({ t: 'tank.join', code: code, key: ME_KEY });
     WB.ui.toast('正在通过好友邀请加入房间 ' + code + '…', 'ok');
   })();
 

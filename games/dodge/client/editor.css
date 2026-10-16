@@ -55,6 +55,19 @@
   display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: 999px;
   background: rgba(76, 141, 255, .18); border: 1px solid var(--accent); font-size: 12.5px; color: #cfe0ff;
 }
+/* 层选菜单：一个点叠了多个障碍部位时，问控制哪一层 */
+.layer-menu {
+  position: absolute; z-index: 30; min-width: 180px; max-width: 240px;
+  padding: 8px; border-radius: 10px; border: 1px solid var(--line2, #334155);
+  background: rgba(15, 23, 42, .97); box-shadow: 0 10px 30px rgba(2, 6, 23, .5);
+}
+.layer-menu .lm-title { font-size: 12px; color: #94a3b8; padding: 2px 6px 8px; }
+.layer-menu .lm-item {
+  display: block; width: 100%; text-align: left; margin: 2px 0; padding: 7px 9px;
+  font-size: 12.5px; color: #e2e8f0; background: rgba(76, 141, 255, .10);
+  border: 1px solid rgba(76, 141, 255, .35); border-radius: 7px; cursor: pointer;
+}
+.layer-menu .lm-item:hover { background: rgba(76, 141, 255, .24); border-color: #4c8dff; }
 .ed-status { font-size: 12.5px; color: var(--dim2); min-height: 18px; }
 .ed-issues { font-size: 12.5px; line-height: 1.9; }
 .ed-issues .err { color: #ff9ba4; }

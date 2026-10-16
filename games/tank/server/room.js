@@ -37,6 +37,19 @@ const FREEZE = 1.6;            // 开局冻结倒计时
 const DEFAULT_LIVES = 1;       // 每局生命数默认 1 条（房主可在 1~5 之间调整）
 const MAX_LIVES = 5;
 
+/**
+ * 掉线宽限期（毫秒）。
+ * WebSocket 因为刷新页面 / 切后台 / 网络抖一下而断开时，**不能**当场把人踢出房间 ——
+ * 以前 onClose 直接走 leave，房主一刷新房间就没了，于是"刚发出去的房间号别人加不进来"
+ * （房间已被销毁），重新建一个又好了。现在先标记掉线、留这么久的宽限期，
+ * 带着同一把身份钥匙回来就原样还给他（见 Hub._reattach）。
+ */
+const DROP_GRACE_MS = (function () {
+  // 自动化测试要能在几百毫秒内把宽限期走完（和 WB_ROUND_LIMIT 一个路子）
+  const v = parseFloat(process.env.WB_DROP_GRACE_MS);
+  return (isFinite(v) && v >= 200) ? v : 30000;
+})();
+
 const COLORS = TankCore.TANK_COLORS;
 const STYLES = TankCore.TANK_STYLES;
 const ALL_POWERUPS = TankCore.POWERUP_TYPES.slice();   // 房间里可勾选的道具（默认全选）
@@ -52,7 +65,12 @@ function newCode(rooms) {
 class TankHub {
   constructor(ctx) {
     this.ctx = ctx;
-    this.rooms = new Map();   // code -> room
+    this.rooms = new Map();     // code -> room
+    this.byKey = new Map();     // 身份钥匙 -> { code, clientId }（刷新/断线重连靠它回房）
+    // 巡检间隔跟着宽限期走：宽限期是 30 秒时 5 秒一巡；测试把它压到几百毫秒也来得及收尾
+    const every = Math.max(200, Math.min(5000, Math.round(DROP_GRACE_MS / 4)));
+    const sweep = setInterval(() => this._sweepDropped(), every);
+    if (sweep.unref) sweep.unref();
   }
 
   roomCount() { return this.rooms.size; }
@@ -60,6 +78,12 @@ class TankHub {
   stats() { return { tankRooms: this.rooms.size }; }
 
   /* ---------- 房间管理 ---------- */
+  /** 身份钥匙（平台层 WB.me 给每个标签页发的那把，刷新/重连后不变） */
+  _key(msg) {
+    const k = msg && msg.key;
+    return (typeof k === 'string' && k) ? k.slice(0, 64) : '';
+  }
+
   create(client, msg) {
     this.leave(client);
     const code = newCode(this.rooms);
@@ -88,7 +112,7 @@ class TankHub {
       results: []           // 每局结果
     };
     this.rooms.set(code, room);
-    this._add(room, client);
+    this._add(room, client, this._key(msg));
     this.ctx.send(client, { t: 'tank.created', code });
     this._pushRoom(room);
     console.log('[tank] 房间', code, '由', client.name, '创建');
@@ -96,29 +120,93 @@ class TankHub {
 
   join(client, msg) {
     const code = String(msg && msg.code || '').trim();
+    const key = this._key(msg);
     const room = this.rooms.get(code);
     if (!room) { this.ctx.send(client, { t: 'tank.error', msg: '房间号不存在，请检查后重试' }); return; }
+
+    /*
+     * ① 带着同一把钥匙回来（刷新页面 / 断线重连）：
+     *    座位、准备状态、比分原样奉还，**对局进行中也照收** ——
+     *    这正是"在房间里刷新一下要能回到房间里"。放在状态校验之前，否则
+     *    "已开局"那一关会把人挡在外面。
+     */
+    if (this._reattach(client, key, code)) {
+      this.ctx.send(client, { t: 'tank.joined', code, resumed: true });
+      return;
+    }
+
     if (room.state !== 'lobby') { this.ctx.send(client, { t: 'tank.error', msg: '该房间已开局，暂时无法加入' }); return; }
     if (room.members.length >= MAX_PLAYERS) { this.ctx.send(client, { t: 'tank.error', msg: '房间已满（最多 4 人）' }); return; }
 
     this.leave(client);
-    this._add(room, client);
+    this._add(room, client, key);
     this.ctx.send(client, { t: 'tank.joined', code });
     this._pushRoom(room);
   }
 
-  _add(room, client) {
+  /**
+   * 按身份钥匙把成员挂回这条新连接。
+   * 刷新 / 断线重连都走这里：把 clientId 换成新的，并把比分、输入、坦克 id
+   * 一起改挂到新 id 上（坦克 id = 1000 + 连接 id，客户端就是这么认自己车的）。
+   */
+  _reattach(client, key, code) {
+    if (!key) return false;
+    const hit = this.byKey.get(key);
+    if (!hit) return false;
+    if (code && hit.code !== code) return false;
+    const room = this.rooms.get(hit.code);
+    if (!room) { this.byKey.delete(key); return false; }
+    const m = this._member(room, hit.clientId);
+    if (!m) { this.byKey.delete(key); return false; }
+
+    const oldId = m.clientId;
+    if (oldId !== client.id) {
+      const oldClient = this.ctx.clients.get(oldId);
+      if (oldClient && oldClient !== client) { oldClient.room = null; oldClient.tankMember = null; }
+      m.clientId = client.id;
+      if (room.scores[oldId]) { room.scores[client.id] = room.scores[oldId]; delete room.scores[oldId]; }
+      if (room.inputs[oldId]) { room.inputs[client.id] = room.inputs[oldId]; delete room.inputs[oldId]; }
+      if (room.tankOf[oldId] != null) {
+        delete room.tankOf[oldId];
+        const t = room.world ? TankCore.findTank(room.world, 1000 + oldId) : null;
+        if (t) t.id = 1000 + client.id;            // 改名：客户端按 1000+连接 id 认自己的车
+        room.tankOf[client.id] = 1000 + client.id;
+      }
+      if (room.hostId === oldId) room.hostId = client.id;
+      if (Array.isArray(room.results)) {
+        for (const r of room.results) for (const row of (r.rows || [])) if (row.id === oldId) row.id = client.id;
+      }
+    }
+    if (!room.scores[client.id]) room.scores[client.id] = { wins: 0, kills: 0, deaths: 0 };
+    if (room.state === 'playing') room.inputs[client.id] = { up: false, down: false, left: false, right: false, fire: false };
+    m.dropped = false;
+    m.dropAt = 0;
+    client.room = room;
+    client.tankMember = m;
+    this.byKey.set(key, { code: room.code, clientId: client.id });
+
+    this._pushRoom(room);
+    // 对局进行中回来的：把这一局的场景重发一份，客户端直接重新进画面继续打
+    if (room.state === 'playing' && room.world) this.ctx.send(client, this._roundPayload(room));
+    return true;
+  }
+
+  _add(room, client, key) {
     const member = {
       clientId: client.id,
       name: client.name,
       color: COLORS[room.members.length % COLORS.length],
       style: STYLES[room.members.length % STYLES.length],
-      ready: false
+      ready: false,
+      key: key || '',
+      dropped: false,
+      dropAt: 0
     };
     room.members.push(member);
     room.scores[client.id] = { wins: 0, kills: 0, deaths: 0 };
     client.room = room;
     client.tankMember = member;
+    if (member.key) this.byKey.set(member.key, { code: room.code, clientId: client.id });
   }
 
   _member(room, clientId) {
@@ -167,14 +255,18 @@ class TankHub {
       roundIndex: room.roundIndex,
       colors: COLORS,
       styles: STYLES,
-      members: room.members.map(m => ({
-        id: m.clientId, name: m.name, color: m.color, style: m.style,
-        ready: this._isReady(room, m),
-        isHost: m.clientId === room.hostId,
-        wins: room.scores[m.clientId].wins,
-        kills: room.scores[m.clientId].kills,
-        deaths: room.scores[m.clientId].deaths
-      }))
+      members: room.members.map(m => {
+        const sc = room.scores[m.clientId] || { wins: 0, kills: 0, deaths: 0 };
+        return {
+          id: m.clientId, name: m.name, color: m.color, style: m.style,
+          ready: this._isReady(room, m),
+          isHost: m.clientId === room.hostId,
+          dropped: !!m.dropped,          // 掉线中（还在宽限期里等他回来）
+          wins: sc.wins,
+          kills: sc.kills,
+          deaths: sc.deaths
+        };
+      })
     };
     // canStart 是「因人而异」的，所以逐个下发
     for (const m of room.members) {
@@ -196,40 +288,37 @@ class TankHub {
     }
   }
 
+  /**
+   * 主动离开（用户点了「退出房间」/ 回主页）。
+   * 这是**真实离开**，房间该收就立刻收：
+   *   · 房主离开 → 整个房间当场解散，其余人收到通知
+   *   · 最后一个人离开 → 房间删除
+   *   · 对局进行中有人离开 → 本场结束（沿用原来的规则）
+   * 注意：断线/刷新**不走这里**，走 _drop（有宽限期，回来还在）。
+   */
   leave(client) {
     const room = client.room;
     if (!room) return;
-    // 对局进行中有人退出 → 整场直接结束，其余人回主页（不做"判负后继续打"）
+    const m = this._member(room, client.id);
+    const isHost = room.hostId === client.id;
+    client.room = null;
+    client.tankMember = null;
+
+    if (isHost) {
+      this._dissolve(room, client.name + '（房主）离开了，房间已解散');
+      return;
+    }
     if (room.state === 'playing' || room.state === 'intermission') {
       this._broadcast(room, {
         t: 'tank.abort', name: client.name,
         msg: client.name + ' 离开了对局，本场结束'
       });
-      for (const m of room.members) {
-        const c = this.ctx.clients.get(m.clientId);
-        if (c) { c.room = null; c.tankMember = null; }
-      }
-      client.room = null; client.tankMember = null;
-      this.rooms.delete(room.code);
+      this._clearRoom(room);
       console.log('[tank] 房间', room.code, '因', client.name, '中途退出而结束');
       return;
     }
-    room.members = room.members.filter(m => m.clientId !== client.id);
-    delete room.inputs[client.id];
-    delete room.tankOf[client.id];
-    // 对局中离开 → 直接判负
-    if (room.world) {
-      const t = this._tankOfClient(room, client.id);
-      if (t) { t.lives = 0; t.alive = false; }
-    }
-    client.room = null;
-    client.tankMember = null;
-
-    if (room.members.length === 0) {
-      this.rooms.delete(room.code);
-      return;
-    }
-    if (room.hostId === client.id) room.hostId = room.members[0].clientId;
+    this._removeMember(room, client.id, m);
+    if (room.members.length === 0) { this._clearRoom(room); return; }
     if (room.state === 'lobby' || room.state === 'over') {
       this._pushRoom(room);
     } else {
@@ -238,7 +327,99 @@ class TankHub {
     }
   }
 
-  onClose(client) { this.leave(client); }
+  /**
+   * 连接断了（刷新网页 / 关标签页 / 断网 / 切后台）：
+   * 先别踢人 —— 见 DROP_GRACE_MS 那段说明。这里只标记掉线并通知屋里其他人。
+   */
+  onClose(client) { this._drop(client); }
+
+  _drop(client) {
+    const room = client.room;
+    if (!room) return;
+    const m = this._member(room, client.id);
+    client.room = null;
+    client.tankMember = null;
+    if (!m) return;
+    m.dropped = true;
+    m.dropAt = Date.now();
+    // 别让他掉线前那一帧的输入继续开车（否则坦克会一直往前冲）
+    if (room.inputs[client.id]) {
+      room.inputs[client.id] = { up: false, down: false, left: false, right: false, fire: false };
+    }
+    this._broadcast(room, {
+      t: 'tank.dropped',
+      name: m.name,
+      grace: Math.round(DROP_GRACE_MS / 1000),
+      msg: m.name + ' 掉线了，' + Math.round(DROP_GRACE_MS / 1000) + ' 秒内回来座位还在'
+    });
+    this._pushRoom(room);
+  }
+
+  /** 宽限期到了还没回来 → 当作真的离开处理 */
+  _sweepDropped() {
+    const now = Date.now();
+    for (const room of Array.from(this.rooms.values())) {
+      const gone = room.members.filter(m => m.dropped && now - (m.dropAt || 0) >= DROP_GRACE_MS);
+      if (!gone.length) continue;
+      let dissolved = false;
+      for (const m of gone) {
+        if (room.hostId === m.clientId) { this._dissolve(room, '房主掉线太久，房间已解散'); dissolved = true; break; }
+        this._removeMember(room, m.clientId, m);
+        this._broadcast(room, { t: 'tank.playerLeft', id: m.clientId, name: m.name });
+      }
+      if (dissolved || !this.rooms.has(room.code)) continue;
+      if (room.members.length === 0) { this._clearRoom(room); continue; }
+      if (room.state === 'playing' || room.state === 'intermission') {
+        this._broadcast(room, { t: 'tank.abort', msg: '有玩家掉线太久，本场结束' });
+        this._clearRoom(room);
+        continue;
+      }
+      this._pushRoom(room);
+    }
+  }
+
+  _removeMember(room, clientId, m) {
+    room.members = room.members.filter(x => x.clientId !== clientId);
+    delete room.inputs[clientId];
+    delete room.tankOf[clientId];
+    delete room.scores[clientId];
+    if (m && m.key) {
+      const hit = this.byKey.get(m.key);
+      if (hit && hit.code === room.code && hit.clientId === clientId) this.byKey.delete(m.key);
+    }
+  }
+
+  /** 房间当场回收：通知还在屋里的人，然后删掉（房主离开 / 宽限期耗尽都走这里） */
+  _dissolve(room, text) {
+    if (!this.rooms.has(room.code)) return;
+    this._broadcast(room, { t: 'tank.abort', msg: text || '房间已解散' });
+    this._clearRoom(room);
+    console.log('[tank] 房间', room.code, '已回收：' + (text || ''));
+  }
+
+  _clearRoom(room) {
+    for (const m of room.members) {
+      const c = this.ctx.clients.get(m.clientId);
+      if (c) { c.room = null; c.tankMember = null; }
+      if (m.key) {
+        const hit = this.byKey.get(m.key);
+        if (hit && hit.code === room.code) this.byKey.delete(m.key);
+      }
+    }
+    this.rooms.delete(room.code);
+  }
+
+  /** 「回到我的房间」：客户端刷新后带着钥匙问一句，服务端把座位还给他 */
+  resume(client, msg) {
+    const key = this._key(msg);
+    const hit = key ? this.byKey.get(key) : null;
+    if (!hit || !this.rooms.get(hit.code) || !this._reattach(client, key, hit.code)) {
+      if (key) this.byKey.delete(key);
+      this.ctx.send(client, { t: 'tank.resumeFailed' });
+      return;
+    }
+    this.ctx.send(client, { t: 'tank.joined', code: hit.code, resumed: true });
+  }
 
   /**
    * 这个人现在是不是「在组队里」（大厅等待中或对局中都算）。
@@ -352,6 +533,37 @@ class TankHub {
     this._pushRoom(room);
   }
 
+  /**
+   * 房主把房主身份转让给房间里另一位成员。
+   * 大厅 / 对局中都允许（房主权限主要在大厅生效，对局中转让不影响本局）。
+   * 旧房主转为普通成员时把 ready 置为 true —— 他当房主时本来就视为就绪，
+   * 别转完反而因为他"未准备"卡住开局；新房主无所谓（_isReady 对房主恒 true）。
+   */
+  giveHost(client, msg) {
+    const room = client.room;
+    if (!room) return;
+    if (client.id !== room.hostId) {
+      this.ctx.send(client, { t: 'tank.error', msg: '只有房主可以转让房主' });
+      return;
+    }
+    const targetId = msg && msg.target;
+    if (targetId === client.id) {
+      this.ctx.send(client, { t: 'tank.error', msg: '不能把房主转让给自己' });
+      return;
+    }
+    const target = this._member(room, targetId);
+    if (!target) {
+      this.ctx.send(client, { t: 'tank.error', msg: '对方已不在房间里' });
+      return;
+    }
+    const old = this._member(room, client.id);
+    if (old) old.ready = true;
+    room.hostId = target.clientId;
+    this._pushRoom(room);
+    this._broadcast(room, { t: 'tank.host', name: target.name });
+    console.log('[tank] 房间', room.code, '房主转让给', target.name);
+  }
+
   /** 房主切换「补充 AI 坦克」开关 */
   setBots(client, msg) {
     const room = client.room;
@@ -447,11 +659,31 @@ class TankHub {
       players.push({ id: 9000 + b, name: t.name, color: t.color, style: t.style, slot, bot: true });
     }
 
-    const payload = {
+    this._broadcast(room, this._roundPayload(room));
+    this._pushRoom(room);
+  }
+
+  /**
+   * 一局的场景下发内容。
+   * 开局时广播给所有人；刷新/断线重连回来时也用它**单独补发一份**，
+   * 客户端就能直接重新进画面继续打（不用等下一局）。
+   */
+  _roundPayload(room) {
+    const world = room.world;
+    const players = [];
+    for (const t of world.tanks) {
+      const m = room.members.filter(x => 1000 + x.clientId === t.id)[0];
+      players.push({
+        id: m ? m.clientId : t.id,
+        name: t.name, color: t.color, style: t.style,
+        slot: t.slot, bot: !!t.bot
+      });
+    }
+    return {
       t: 'tank.round',
       index: room.roundIndex,
       total: room.rounds,
-      seed,
+      seed: world.seed,
       cols: world.cols,
       rows: world.rows,
       tiles: Buffer.from(world.tiles).toString('base64'),
@@ -460,8 +692,6 @@ class TankHub {
       lives: room.lives,
       players
     };
-    this._broadcast(room, payload);
-    this._pushRoom(room);
   }
 
   _tankOfClient(room, clientId) {
@@ -474,8 +704,16 @@ class TankHub {
   input(client, msg) {
     const room = client.room;
     if (!room || room.state !== 'playing') return;
+    /*
+     * msg.a = 客户端此刻渲染的炮管角度。服务端开火方向以它为准 ——
+     * 否则服务端自己积出来的角度总比玩家看到的慢一拍（输入要走一个网络来回），
+     * 子弹飞出去的方向和炮管对不上，就是玩家说的「弹道偏离」。
+     * 局域网内信任客户端的角度；只挡 NaN / 无穷这种坏值。
+     */
+    const aim = Number(msg.a);
     room.inputs[client.id] = {
-      up: !!msg.up, down: !!msg.down, left: !!msg.left, right: !!msg.right, fire: !!msg.fire
+      up: !!msg.up, down: !!msg.down, left: !!msg.left, right: !!msg.right, fire: !!msg.fire,
+      aim: (isFinite(aim) && Math.abs(aim) < 100) ? aim : null
     };
   }
 
@@ -504,7 +742,12 @@ class TankHub {
           const t = this._tankOfClient(room, m.clientId);
           if (t) {
             const inp = room.inputs[m.clientId];
-            if (inp) { t.input.up = inp.up; t.input.down = inp.down; t.input.left = inp.left; t.input.right = inp.right; t.input.fire = inp.fire; }
+            if (inp) {
+              t.input.up = inp.up; t.input.down = inp.down; t.input.left = inp.left; t.input.right = inp.right; t.input.fire = inp.fire;
+              // 采用客户端渲染的炮管角度（见 input()）：开火方向与玩家看到的一致，
+              // 坦克朝向也跟着对齐 —— 客户端预测本来就是按这个角度在走
+              if (inp.aim !== null && inp.aim !== undefined) t.angle = inp.aim;
+            }
           }
         }
         const before = room.world.time;
@@ -694,9 +937,11 @@ TankHub.card = {
 TankHub.routes = {
   'tank.create': 'create',
   'tank.join': 'join',
+  'tank.resume': 'resume',       // 刷新/重连后"回到我的房间"
   'tank.leave': 'leave',
   'tank.config': 'config',
   'tank.ready': 'setReady',
+  'tank.giveHost': 'giveHost',   // 房主把房主身份转给房间里另一位成员
   'tank.bots': 'setBots',
   'tank.rounds': 'setRounds',
   'tank.lives': 'setLives',

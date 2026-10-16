@@ -253,10 +253,56 @@ for (const type of Object.keys(Chat.routes)) {
 }
 console.log('[platform] 已装配频道聊天（' + Object.keys(Chat.routes).length + ' 条消息路由，房间内所有人可见）');
 
+/* ============================================================
+ *  全服公告（控制台 /notice 命令）
+ *  显示在每个页面顶栏的中间：内容长会横向滚动；常驻显示，不会自动消失（只能手动关掉）。
+ *  新连进来的客户端在 hello 里捎上当前公告，中途进场也能看到。
+ * ============================================================ */
+let currentNotice = null;          // { text, ts }
+
+function broadcast(obj) {
+  for (const c of clients.values()) send(c, obj);
+}
+
+function setNotice(text) {
+  const t = String(text || '').trim().slice(0, 120);
+  if (!t) return false;
+  currentNotice = { text: t, ts: Date.now() };
+  broadcast({ t: 'notice', text: t });
+  return true;
+}
+
+/**
+ * 热更新（控制台 /update 命令）：
+ *   - 重新扫一遍 games/，**新出现**的游戏当场装配（路由 + 主页卡片 + 静态挂载）；
+ *   - 已在运行的游戏 hub 实例一个都不碰 —— 房间、对局、比分全部原样保留。
+ *     前端页面本来就是每请求从磁盘直读、且响应头带 no-cache，
+ *     玩家下次刷新网页自动就是新版，不需要踢人（"慢慢传上去"不影响在玩的人）；
+ *   - 已存在游戏的"服务端规则"（room.js）改动不重载：重载必然要丢房间，
+ *     保房间和换新规则只能选一个，这里选保房间 —— 换规则请重启服务。
+ */
+function hotUpdate() {
+  const known = new Set(games.map(g => g.name));
+  let added = 0;
+  for (const mod of loadGameModules()) {
+    if (known.has(mod.name)) continue;
+    try { assembleGame(mod); added++; }
+    catch (e) { console.error('[update] 装配失败', mod.name, e.message); }
+  }
+  if (added) games.sort((a, b) => (a.order - b.order) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  MOUNTS = buildMounts();           // 新游戏的页面马上能打开
+  return added;
+}
+
 /** 目录名会直接变成 URL 前缀，撞上平台保留路径会让静态挂载互相遮蔽 */
 const RESERVED_NAMES = new Set(['shared', 'api', 'platform', 'games', 'tools']);
 
-for (const mod of loadGameModules()) {
+/**
+ * 装配一个游戏模块：建 hub、登记卡片信息、接消息路由。
+ * 启动时每个游戏都走这里；/update 热更新发现的新游戏也走这里 ——
+ * 所以"加一个游戏"不管冷启动还是热装配，规则完全一致。
+ */
+function assembleGame(mod) {
   const hub = new mod.Hub(ctx);
   const title = mod.Hub.title || mod.name;
   const entry = mod.Hub.entry || ('/' + mod.name + '/');
@@ -302,7 +348,10 @@ for (const mod of loadGameModules()) {
     wired++;
   }
   console.log('[game] 已装配 ' + title + '  (' + wired + ' 条消息路由)');
+  return hub;
 }
+
+for (const mod of loadGameModules()) assembleGame(mod);
 
 /* 消息前缀也不该两个游戏共用：类型虽不撞，语义已经混在一起，早晚出事 */
 const prefixOwner = new Map();          // 消息前缀 → 游戏目录名
@@ -385,7 +434,8 @@ function handleMessage(client, msg) {
     }
     send(client, {
       t: 'hello', id: client.id, name: client.name, ip: client.ip,
-      inviteCode: client.inviteCode, serverTime: Date.now()
+      inviteCode: client.inviteCode, serverTime: Date.now(),
+      notice: currentNotice            // 当前全服公告（没有就是 null）
     });
     friends.onHello(client);   // 好友系统：登记在线状态并下发全量好友数据
     return;
@@ -458,7 +508,8 @@ ws.attach(server, (conn, req) => {
 
   send(client, {
     t: 'hello', id, name: client.name, ip: client.ip,
-    inviteCode: client.inviteCode, serverTime: Date.now()
+    inviteCode: client.inviteCode, serverTime: Date.now(),
+    notice: currentNotice              // 当前全服公告（没有就是 null）
   });
 
   conn.on('message', (text) => {
@@ -514,6 +565,35 @@ setInterval(() => {
   });
 }, 20000).unref();
 
+/* ============================================================
+ *  控制台命令：在服务器窗口（start.bat 那个黑窗口）里直接输入，回车生效
+ *    /notice 公告内容   发全服公告（顶栏中间滚动显示，常驻不自动消失，可手关）
+ *    /update           载入项目改动：新游戏当场装配，页面改动玩家刷新即生效，
+ *                      已在进行的房间全部保留；完成后自动发一条「当前服务器已更新」
+ * ============================================================ */
+if (process.stdin.isTTY) {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin });
+  rl.on('line', (line) => {
+    const s = line.trim();
+    if (!s) return;
+    if (s === '/update') {
+      const n = hotUpdate();
+      console.log('[update] 完成：' + (n ? '新装配了 ' + n + ' 个游戏；' : '')
+        + '页面改动已生效（玩家下次刷新网页自动载入），进行中的房间全部保留');
+      setNotice('当前服务器已更新');
+      return;
+    }
+    if (s === '/notice' || s.indexOf('/notice ') === 0) {
+      const text = s.slice('/notice'.length).trim();
+      if (setNotice(text)) console.log('[notice] 公告已发送：' + currentNotice.text);
+      else console.log('[notice] 用法：/notice 公告内容');
+      return;
+    }
+    console.log('  未知命令「' + s + '」。可用命令：/notice 公告内容 、/update');
+  });
+}
+
 /* ---------------- 启动 ---------------- */
 /** 列出可用于「给别的电脑访问」的局域网地址，过滤掉虚拟机/WSL 等虚拟网卡 */
 const VIRTUAL_RE = /(vmware|virtualbox|hyper-?v|vethernet|wsl|docker|loopback|tap|tun\b|bluetooth|radmin|zerotier|tailscale|npcap|virtual)/i;
@@ -553,6 +633,12 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('  游戏入口（主页里也能点）：');
   games.forEach(g => console.log('      ' + String(g.entry).padEnd(12) + g.title));
+  console.log('');
+  console.log('  数据存储位置：' + Friends.DATA_FILE);
+  console.log('      （各 IP 的昵称 / 好友关系 / 聊天记录都存在这里，重启服务器不丢）');
+  console.log('');
+  console.log('  本窗口可输入命令（回车生效）：/notice 公告内容 发全服公告；/update 载入项目改动（保留房间）');
+  console.log('');
   console.log('  关闭本窗口 或按 Ctrl+C 即可停止服务');
   console.log('');
   console.log('  别的电脑打不开？99% 是 Windows 防火墙拦了入站端口：');

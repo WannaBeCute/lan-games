@@ -16,7 +16,8 @@
   var esc = function (s) { return WB.util.esc(s); };
 
   var PROGRESS_KEY = 'dodge.progress.v1';       // 单人进度与最好成绩
-  var CUSTOM_KEY = 'dodge.custom.levels.v1';    // 编辑器做的自制关卡
+  var CUSTOM_KEY = 'dodge.custom.levels.v1';    // 编辑器做的自制关卡（自制关卡池）
+  var COLL_KEY = 'dodge.collections.v1';        // 用户自建的关卡合集（只存本机，不上服务器）
 
   /* 本地多人的键位（玩家 1 = 方向键 + 空格接应）—— 同时也是「设置 → 键位设置 → 方块躲避」里的默认值 */
   var LOCAL_KEYS = [
@@ -73,6 +74,16 @@
       return Array.isArray(list) ? list.map(function (raw) { return DC.normalizeLevel(raw); }) : [];
     } catch (e) { return []; }
   }
+  /** 用户自建合集（本机存储）：[{id, name, levelIds:[自制关卡 id...]}]，自由开放、随便改 */
+  function loadColls() {
+    try {
+      var list = JSON.parse(localStorage.getItem(COLL_KEY) || '[]');
+      return Array.isArray(list) ? list.filter(function (c) { return c && c.id && c.name; }) : [];
+    } catch (e) { return []; }
+  }
+  function saveColls(list) {
+    try { localStorage.setItem(COLL_KEY, JSON.stringify(list)); } catch (e) { /* noop */ }
+  }
   function bestOf(key) { return loadProgress().best[key] || null; }
   function recordClear(key, time, deaths) {
     var p = loadProgress();
@@ -82,17 +93,114 @@
     return p;
   }
 
+  /* ================= 关卡合集 =================
+   * 合集规则（与需求一致）：
+   *   · 「基础关卡」「自制关卡」是两个固定合集：不得删除、不得改名
+   *   · 基础关卡 = 服务器内置的 10 关，关卡制（一关一关打通解锁）
+   *   · 编辑器保存的自制关卡都进「自制关卡」合集
+   *   · 用户可以再建合集（默认自由开放）：改名、删除、把关卡在合集间移动都可以，只存本机
+   *   · 「关卡制」只能由开发者在后台 levels.json 里标 progressive:true ——
+   *     网页上没有这个开关；关卡制合集里的关卡用户不能改 / 删 / 移动
+   */
+  function buildCollections(pack) {
+    var byId = {};
+    S.levels.forEach(function (lv) { byId[String(lv.id)] = lv; });
+    var colls = [];
+    // 服务器合集（basic 固定；其余若标了 progressive 就是关卡制，网页不给任何操作入口）
+    var srvColls = (pack && Array.isArray(pack.collections) && pack.collections.length)
+      ? pack.collections
+      : [{ id: 'basic', name: '基础关卡', fixed: true, progressive: true, levels: S.levels.map(function (l) { return l.id; }) }];
+    srvColls.forEach(function (raw) {
+      if (!raw || !raw.id) return;
+      var coll = {
+        id: String(raw.id),
+        name: String(raw.name || raw.id),
+        fixed: !!raw.fixed,
+        progressive: !!raw.progressive,
+        server: true,
+        levels: []
+      };
+      var ids = Array.isArray(raw.levels) && raw.levels.length ? raw.levels : (coll.id === 'basic' ? S.levels.map(function (l) { return l.id; }) : []);
+      ids.forEach(function (id) {
+        var lv = byId[String(id)];
+        if (lv && coll.levels.indexOf(lv) < 0) { lv._coll = coll; coll.levels.push(lv); }
+      });
+      if (coll.levels.length) colls.push(coll);
+    });
+    // 服务器合集没认领的内置关卡（数据写漏了也别丢）→ 并进 basic
+    var basic = colls.filter(function (c) { return c.id === 'basic'; })[0];
+    S.levels.forEach(function (lv) {
+      if (!lv._coll && basic) { lv._coll = basic; basic.levels.push(lv); }
+    });
+
+    // 「自制关卡」合集（固定）：自制池里没被用户合集收编的关卡
+    var claimed = {};
+    loadColls().forEach(function (c) { (c.levelIds || []).forEach(function (id) { claimed[String(id)] = 1; }); });
+    var customColl = { id: 'custom', name: '自制关卡', fixed: true, progressive: false, server: false, levels: [] };
+    S.custom.forEach(function (lv) {
+      if (!claimed[String(lv.id)]) { lv._coll = customColl; customColl.levels.push(lv); }
+    });
+    colls.push(customColl);
+
+    // 用户自建合集（自由开放）
+    loadColls().forEach(function (raw) {
+      var coll = { id: String(raw.id), name: String(raw.name), fixed: false, progressive: false, server: false, levels: [] };
+      (raw.levelIds || []).forEach(function (id) {
+        var lv = null;
+        for (var i = 0; i < S.custom.length; i++) if (String(S.custom[i].id) === String(id)) { lv = S.custom[i]; break; }
+        if (lv) { lv._coll = coll; coll.levels.push(lv); }
+      });
+      colls.push(coll);
+    });
+    S.collections = colls;
+  }
+
+  /** 合集当前的解锁数（仅关卡制合集有意义；自由合集返回 Infinity） */
+  function collUnlocked(coll, prog) {
+    if (!coll || !coll.progressive) return Infinity;
+    if (coll.id === 'basic') return prog.unlocked;
+    var c = (prog.coll || {})[coll.id];
+    return Math.max(1, (c && c.unlocked) || 1);
+  }
+  /** 关卡在合集里的序号（0 起）是否被锁住 */
+  function levelLocked(lv, prog) {
+    var coll = lv._coll;
+    if (!coll || !coll.progressive) return false;
+    var idx = coll.levels.indexOf(lv);
+    return (idx + 1) > collUnlocked(coll, prog);
+  }
+  /** 通关后记解锁：关卡制合集里过了第 k 关（0 起）就开到 k+2 */
+  function markCleared(lv, p) {
+    var coll = lv._coll;
+    if (!coll || !coll.progressive) return;
+    var idx = coll.levels.indexOf(lv);
+    if (idx < 0) return;
+    if (coll.id === 'basic') { p.unlocked = Math.max(p.unlocked, idx + 2); return; }
+    p.coll = p.coll || {};
+    var c = p.coll[coll.id] = p.coll[coll.id] || { unlocked: 1 };
+    c.unlocked = Math.max(c.unlocked || 1, idx + 2);
+  }
+
   /* ================= 关卡列表 ================= */
-  function allLevels() { return S.levels.concat(S.custom); }
-  function levelKey(lv) { return lv.custom ? ('custom:' + lv.id) : ('builtin:' + lv.id); }
+  function allLevels() {
+    var out = [];
+    (S.collections || []).forEach(function (coll) { coll.levels.forEach(function (lv) { out.push(lv); }); });
+    return out;
+  }
+  function levelKey(lv) {
+    if (lv.custom) return 'custom:' + lv.id;
+    return (lv._coll && lv._coll.id !== 'basic') ? ('srv:' + lv._coll.id + ':' + lv.id) : ('builtin:' + lv.id);
+  }
   function difficultyStars(n) { var s = ''; for (var i = 0; i < 5; i++) s += i < n ? '★' : '☆'; return s; }
 
   function fetchLevels() {
     return fetch('/dodge/shared/levels.json').then(function (r) { return r.json(); }).then(function (pack) {
+      S.pack = pack;
       S.levels = (pack.levels || []).map(function (raw) { return DC.normalizeLevel(raw); });
       S.custom = loadCustomLevels();
       S.custom.forEach(function (lv) { lv.custom = true; });
       if (!S.levels.length) throw new Error('关卡包是空的');
+      buildCollections(pack);
       return allLevels();
     });
   }
@@ -325,12 +433,16 @@
   function renderLevelHint(lv) {
     var el = $('levelHint');
     el.innerHTML = '';
-    var b = document.createElement('div');
-    b.style.marginBottom = '8px';
-    b.textContent = '第 ' + S.levelIndex + ' 关还没开始';
-    el.textContent = '';
-    $('hLevel').textContent = '第 ' + (S.levelIndex + 1) + ' 关';
+    $('hLevel').textContent = levelLabel(lv);
     $('levelHint').textContent = (lv && lv.hint) ? lv.hint : '把每个人都送进绿色终点区域（进去任意一格都算到达）。';
+  }
+
+  /** 关卡的全称标注：「合集名 · 第 N 关」（N 是合集内序号） */
+  function levelLabel(lv) {
+    var coll = lv && lv._coll;
+    if (!coll) return '第 ? 关';
+    var idx = coll.levels.indexOf(lv);
+    return coll.name + ' · 第 ' + (idx + 1) + ' 关';
   }
 
   function renderTeam() {
@@ -395,11 +507,15 @@
 
   function showClearOverlay() {
     var lv = S.world.level;
-    var isFirst = S.players[0].index === 0;
     var p = recordClear(levelKey(lv), S.elapsed, S.totalDeaths);
+    markCleared(lv, p);
+    saveProgress(p);
     var best = p.best[levelKey(lv)];
-    var hasNext = S.levelIndex + 1 < allLevels().length;
-    if (hasNext) { p.unlocked = Math.max(p.unlocked, S.levelIndex + 2); saveProgress(p); }
+    // 「下一关」= 同一个合集里的下一关（跨合集不接力）；关卡制合集里刚通关就会解锁它
+    var list = allLevels();
+    var nxt = list[S.levelIndex + 1];
+    var hasNext = !!(nxt && nxt._coll && lv._coll && nxt._coll.id === lv._coll.id && !levelLocked(nxt, loadProgress()));
+    var idxInColl = lv._coll ? lv._coll.levels.indexOf(lv) : S.levelIndex;
 
     var rows = S.players.map(function (q) {
       return '<div class="r"><span class="swatch" style="background:' + q.color + '"></span>' +
@@ -407,8 +523,8 @@
     }).join('');
 
     showOverlay(
-      '<h2>🎉 第 ' + (S.levelIndex + 1) + ' 关通关</h2>' +
-      '<p class="osub">' + esc(lv.name) + ' · 用时 ' + S.elapsed.toFixed(1) + ' 秒 · 全队共死亡 ' + S.totalDeaths + ' 次' +
+      '<h2>🎉 第 ' + (idxInColl + 1) + ' 关通关</h2>' +
+      '<p class="osub">' + esc(lv._coll ? lv._coll.name + ' · ' : '') + esc(lv.name) + ' · 用时 ' + S.elapsed.toFixed(1) + ' 秒 · 全队共死亡 ' + S.totalDeaths + ' 次' +
       '<br>本关最好成绩：' + best.deaths + ' 次死亡 / ' + best.time.toFixed(1) + ' 秒</p>' +
       '<div class="result-rows">' + rows + '</div>' +
       '<div class="obtns">' +
@@ -461,7 +577,7 @@
   function updateHud() {
     $('hTimer').textContent = '⏱ ' + (S.mode === 'online' ? S.elapsed : S.elapsed).toFixed(1) + 's';
     $('hDeaths').textContent = '💀 ' + S.totalDeaths;
-    if (S.mode !== 'online') $('hLevel').textContent = '第 ' + (S.levelIndex + 1) + ' 关';
+    if (S.mode !== 'online') $('hLevel').textContent = levelLabel(S.world && S.world.level);
     // 接应按钮：自己已到达且冷却结束才亮
     var me = S.mode === 'online' ? S.onlineMyPlayer() : null;
     if (S.mode === 'online' && me) {
@@ -477,9 +593,37 @@
     return S.players[S.online.myIndex] || null;
   }
 
+  /**
+   * 本标签页的稳定身份钥匙（平台层 WB.me 提供）。
+   * 平台每次连接都换新 id，于是"刷新一下"在服务端看来就是新玩家：房间被当成掉线销毁，
+   * 刚发出去的房间号随之失效。带上这把钥匙，刷新/断线重连才能把座位要回来。
+   */
+  var ME_KEY = WB.me.key();
+
   function initNet() {
     S.net = new WB.Net();
     WB.bindNetBadge($('netBadge'), S.net);
+
+    /* 连上就试着「回到我的房间」：刷新/断线重连后自动接回座位（对局中也照收） */
+    S.net.on('hello', function () {
+      if (!WB.me.recallRoom('dodge')) return;
+      S.net.send({ t: 'dodge.resume', key: ME_KEY });
+    });
+    S.net.on('dodge.resumeFailed', function () { WB.me.forgetRoom('dodge'); });
+    S.net.on('dodge.dropped', function (m) {
+      WB.ui.toast((m && m.msg) || '有队友掉线了', 'err');
+      WB.audio.play('error');
+    });
+    S.net.on('dodge.closed', function (m) {
+      WB.ui.toast((m && m.msg) || '房间已解散', 'err');
+      WB.audio.play('error');
+      WB.me.forgetRoom('dodge');
+      WB.Chat.leaveRoom();
+      S.world = null;
+      S.online = null;
+      WB.Friends.refreshGame();
+      show('scr-menu');
+    });
 
     /* ---------- 好友系统（平台层，所有游戏通用） ---------- */
     WB.Friends.boot(S.net);
@@ -502,20 +646,23 @@
         if (!/^\d{4}$/.test(code)) { WB.ui.toast('邀请信息不完整', 'err'); WB.audio.play('error'); return; }
         if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
         WB.ui.toast('正在加入好友的房间 ' + code + '…', 'ok');
-        S.net.send({ t: 'dodge.join', code: code });
+        S.net.send({ t: 'dodge.join', code: code, key: ME_KEY });
       }
     });
 
     S.net.on('dodge.created', function (m) {
       WB.audio.play('click');
       WB.ui.toast('房间已创建：' + m.code, 'ok');
+      WB.me.rememberRoom('dodge', m.code);        // 刷新后能自己回来
       WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
       show('scr-lobby');
     });
     S.net.on('dodge.joined', function (m) {
-      WB.ui.toast('已加入房间：' + m.code, 'ok');
+      WB.ui.toast(m.resumed ? ('已回到房间：' + m.code) : ('已加入房间：' + m.code), 'ok');
+      WB.me.rememberRoom('dodge', m.code);
       WB.Chat.enterRoom({ game: 'dodge', code: m.code, title: '方块躲避 · 房间 ' + m.code });
-      show('scr-lobby');
+      // 正在跑的这一关：服务端随后会补发关卡场景直接进画面，别把人按回大厅
+      if (S.screen !== 'scr-game') show('scr-lobby');
     });
     S.net.on('dodge.you', function (m) {
       if (!S.online) S.online = { code: '', myIndex: 0, room: null, members: [] };
@@ -533,7 +680,7 @@
       else if (S.screen === 'scr-game') { /* 对局中收到大厅状态，忽略 */ }
       else renderLobby(m);
     });
-    S.net.on('dodge.host', function (m) { WB.ui.toast(m.name + ' 成为新房主'); });
+    S.net.on('dodge.host', function (m) { WB.ui.toast('房主已转让给 ' + m.name); });
     S.net.on('dodge.playerLeft', function (m) { WB.ui.toast(m.name + ' 离开了队伍'); });
     S.net.on('dodge.error', function (m) { WB.ui.toast(m.msg || '操作失败', 'err'); WB.audio.play('error'); });
 
@@ -751,6 +898,7 @@
     $('roomCount').textContent = room.members.length + '/' + room.maxPlayers;
     var ul = $('playerList');
     ul.textContent = '';
+    var isHost = S.net && room.hostId === S.net.id;
     room.members.forEach(function (mem) {
       var li = document.createElement('li');
       if (S.net && mem.id === S.net.id) li.className = 'me';
@@ -764,10 +912,20 @@
       tag.className = 'tag' + (mem.host ? ' host' : (mem.ready ? ' ok' : ''));
       tag.textContent = mem.host ? '房主' : (mem.ready ? '✔ 已准备' : '未准备');
       li.appendChild(sw); li.appendChild(nm); li.appendChild(tag);
+      // 我是房主时，其他成员行内给一个「转让房主」小按钮
+      if (isHost && mem.id !== S.net.id) {
+        var gv = document.createElement('button');
+        gv.className = 'btn tiny ghost';
+        gv.textContent = '转让房主';
+        gv.onclick = function () {
+          WB.audio.play('click');
+          S.net.send({ t: 'dodge.giveHost', target: mem.id });
+        };
+        li.appendChild(gv);
+      }
       ul.appendChild(li);
     });
 
-    var isHost = S.net && room.hostId === S.net.id;
     var me = room.members.filter(function (m) { return S.net && m.id === S.net.id; })[0];
     $('btnReady').classList.toggle('hidden', !!isHost);
     $('btnReady').textContent = (me && me.ready) ? '取消准备' : '我已准备好';
@@ -967,14 +1125,14 @@
     $('btnCreateRoom').onclick = function () {
       WB.audio.play('click');
       if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
-      S.net.send({ t: 'dodge.create' });
+      S.net.send({ t: 'dodge.create', key: ME_KEY });
     };
     function doJoin() {
       var code = ($('joinCode').value || '').trim();
       if (!/^\d{4}$/.test(code)) { WB.ui.toast('请输入 4 位数字房间号', 'err'); WB.audio.play('error'); return; }
       if (S.net.status !== 'open') { WB.ui.toast('正在连接服务器…', 'err'); return; }
       WB.audio.play('click');
-      S.net.send({ t: 'dodge.join', code: code });
+      S.net.send({ t: 'dodge.join', code: code, key: ME_KEY });
     }
     $('btnJoinRoom').onclick = doJoin;
     $('joinCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
@@ -990,6 +1148,7 @@
     $('btnLeaveRoom').onclick = function () {
       WB.audio.play('click');
       S.net.send({ t: 'dodge.leave' });
+      WB.me.forgetRoom('dodge');    // 明确离开了，别再自动回房
       WB.Chat.leaveRoom();          // 退出房间 → 关掉本局聊天频道
       S.world = null;
       S.online = null;
@@ -1046,7 +1205,7 @@
         var code = String((data && data.room) || '').trim();
         if (/^\d{4}$/.test(code)) {
           WB.ui.toast('正在通过好友邀请加入房间 ' + code + '…', 'ok');
-          S.net.send({ t: 'dodge.join', code: code });
+          S.net.send({ t: 'dodge.join', code: code, key: ME_KEY });
         }
       }
     }).catch(function (e) {

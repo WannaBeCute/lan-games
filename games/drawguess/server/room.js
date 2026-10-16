@@ -46,11 +46,26 @@ const BRUSH_IDS = [
 /* 三种模式：画笔 / 橡皮 / 涂抹 —— 都用当前笔刷 */
 const MODES_OK = ['pen', 'erase', 'smudge'];
 
+/**
+ * 三档提示的代价。**统一 3 分** —— 以前是 3/5/8，越具体的提示越贵；
+ * 但玩家普遍反馈"想给提示又不敢给"（一次 8 分太疼），改成统一 3 分，
+ * 提示该用就用，节奏更快。
+ */
 const HINTS = {
   type: { label: '类型', cost: 3 },
-  len: { label: '几个字', cost: 5 },
-  origin: { label: '来自哪里', cost: 8 }
+  len: { label: '几个字', cost: 3 },
+  origin: { label: '来自哪里', cost: 3 }
 };
+/** 猜错一次的扣分（猜的人扣，画的人不扣） */
+const MISS_PENALTY = 2;
+/**
+ * 画者想「放弃绘画」至少要等对局进行这么久（毫秒）——避免一上来就放弃刷分。
+ * 自动化测试可用 WB_GIVEUP_UNLOCK_MS 压缩（和 WB_ROUND_LIMIT 一个路子）。
+ */
+const GIVEUP_UNLOCK_MS = (function () {
+  const v = parseFloat(process.env.WB_GIVEUP_UNLOCK_MS);
+  return (isFinite(v) && v >= 0) ? v : 60000;
+})();
 
 function guessScore(ratio) { return 10 + Math.round(20 * Math.max(0, Math.min(1, ratio))); }
 function painterScore(ratio) { return 15 + Math.round(15 * Math.max(0, Math.min(1, ratio))); }
@@ -353,6 +368,31 @@ class DrawGuessHub {
     this._push(room);
   }
 
+  /** 房主主动把房主转给房间里的另一位活跃成员（任何房间状态都可以转） */
+  giveHost(client, msg) {
+    const room = this._roomOf(client);
+    if (!room) return;
+    if (room.hostId !== client.id) { this._err(client, '只有房主能转让房主'); return; }
+    const targetId = msg && msg.target;
+    if (!targetId || targetId === client.id) { this._err(client, '只能转给房间里的其他人'); return; }
+    const target = this._memberOf(room, targetId);
+    if (!target || target.left) { this._err(client, '对方不在房间里'); return; }
+
+    room.hostId = targetId;
+    // ★ 房主身份钥匙必须一起换成新房主的：不换的话，旧房主下次重进会凭旧 hostKey
+    //   把房主抢回去（join 里的归还逻辑只认 hostKey）。钥匙就是成员加入时存的
+    //   key 字段；万一没有，就照 join 里 joinerKey 的同构形式（ip + '|' + 昵称）补一个。
+    const tc = this._clientOf(room, targetId);
+    room.hostKey = target.key || (tc ? (tc.ip + '|' + tc.name) : room.hostKey);
+    // 旧房主当房主时本来就被视为就绪（开局门槛不查房主），转出去后得把 ready 补上，
+    // 否则新房主会因为「旧房主没准备」而开不了局。
+    const oldHost = this._memberOf(room, client.id);
+    if (oldHost) oldHost.ready = true;
+
+    this._broadcast(room, { t: 'ydwg.host', name: target.name });
+    this._push(room);
+  }
+
   /** 不轮换模式：自己选"愿不愿意当画者" */
   role(client, msg) {
     const room = this._roomOf(client);
@@ -453,6 +493,7 @@ class DrawGuessHub {
     }
     room.painterPool = painters.map((m) => m.clientId);
     room.state = 'playing';
+    room.matchStartAt = Date.now();      // 「画者放弃绘画」要等对局进行满 1 分钟
     this._broadcast(room, { t: 'ydwg.matchStart', mode: 'fixed', rounds: room.settings.rounds });
     // 先弹 3 秒「谁画谁猜」，再进对局
     this._showRoles(room, 'fixed', room.painterPool[0], room.painterPool.map(
@@ -468,6 +509,7 @@ class DrawGuessHub {
     room.orderPos = 0;
     room.cycle = 0;
     room.state = 'playing';
+    room.matchStartAt = Date.now();
     this._broadcast(room, {
       t: 'ydwg.matchStart',
       mode: 'rotate',
@@ -702,6 +744,29 @@ class DrawGuessHub {
     });
   }
 
+  /**
+   * 画者放弃绘画：本回合作废，直接进下一回合（客户端会先二次确认）。
+   * 门槛：对局必须已经进行满 GIVEUP_UNLOCK_MS —— 否则一开局就能放弃，
+   * 等于把"换题"变成免费无限次，还会把比分刷乱。
+   */
+  giveup(client) {
+    const room = this._roomOf(client);
+    if (!room || !room.turn || room.state !== 'playing') return;
+    if (room.turn.painterId !== client.id) { this._err(client, '只有画者可以放弃绘画'); return; }
+    const leftMs = GIVEUP_UNLOCK_MS - (Date.now() - (room.matchStartAt || Date.now()));
+    if (leftMs > 0) {
+      this._err(client, '对局满 1 分钟后才能放弃绘画（还差 ' + Math.ceil(leftMs / 1000) + ' 秒）');
+      return;
+    }
+    this._broadcast(room, {
+      t: 'ydwg.giveup',
+      by: room.turn.painterName,
+      word: room.turn.word.text,
+      text: room.turn.painterName + ' 放弃了这一回合，答案是「' + room.turn.word.text + '」'
+    });
+    this._endTurn(room, 'giveup');
+  }
+
   /* ---------------- 猜 ---------------- */
   guess(client, msg) {
     const room = this._roomOf(client);
@@ -728,11 +793,19 @@ class DrawGuessHub {
 
     if (me) me.guessCdUntil = now + GUESS_CD_MS;
     room.turn.guessers.push({ id: client.id, text: text });
+    // 猜错要付代价：扣 MISS_PENALTY 分（扣到 0 分为止，不会变成负分）
+    const before = room.scores[client.id] || 0;
+    const after = Math.max(0, before - MISS_PENALTY);
+    room.scores[client.id] = after;
+    const lost = before - after;
+    room.turn.missPenalty = (room.turn.missPenalty || 0) + lost;
     this._broadcast(room, {
       t: 'ydwg.guessMiss',
       id: client.id,
       name: client.name,
       text: text,
+      penalty: lost,
+      score: after,
       cd: Math.round(GUESS_CD_MS / 1000)
     });
     this._push(room);
@@ -747,8 +820,9 @@ class DrawGuessHub {
     const g = guessScore(ratio);
     const pBase = painterScore(ratio);
     const hintCost = turn.hintCost || 0;
-    const swapCost = (turn.swapsUsed || 0) * 2;
-    const rawP = pBase - hintCost - swapCost;
+    // 换题**不扣分**：画者换个能画的题目是正常需求，扣分只会让人硬着头皮画不会画的。
+    // （每回合能换几次的上限仍然保留，防止靠换题刷到简单词）
+    const rawP = pBase - hintCost;
     const p = Math.max(0, rawP);          // 画者分数不为负
     // ★ 得分明细：结算弹窗里「详细」那一栏要用（基础分 / 提示 / 换题 各是多少）
     turn.gainDetail = {};
@@ -757,7 +831,7 @@ class DrawGuessHub {
     };
     const pItems = [{ label: '基础分（按剩余时间计算）', pts: pBase }];
     if (hintCost) pItems.push({ label: '使用了提示', pts: -hintCost });
-    if (swapCost) pItems.push({ label: '换题', pts: -swapCost });
+    if (turn.swapsUsed) pItems.push({ label: '换题 ×' + turn.swapsUsed + '（不扣分）', pts: 0 });
     if (rawP < 0) pItems.push({ label: '扣到 0 分就不再扣了', pts: p - rawP });
     turn.gainDetail[turn.painterId] = { pts: p, items: pItems };
     room.scores[client.id] = (room.scores[client.id] || 0) + g;
@@ -943,12 +1017,16 @@ class DrawGuessHub {
       if (room.state === 'playing' && room.turn) {
         const unlockAt = room.turn.total * HINT_UNLOCK_RATIO;
         const hintLeft = Math.max(0, Math.ceil(unlockAt - room.turn.elapsed));
+        const giveupLeftMs = GIVEUP_UNLOCK_MS - (Date.now() - (room.matchStartAt || Date.now()));
         this._broadcast(room, {
           t: 'ydwg.tick',
           left: Math.max(0, Math.round(room.turn.total - room.turn.elapsed)),
           total: room.turn.total,
           canHint: hintLeft <= 0,
           hintLeft: hintLeft,
+          // 画者「放弃绘画」：对局满 1 分钟后才可用，客户端据此置灰并显示倒计时
+          canGiveUp: giveupLeftMs <= 0,
+          giveUpLeft: Math.max(0, Math.ceil(giveupLeftMs / 1000)),
           opCount: room.turn.ops.length
         });
       } else if (room.state === 'grabbing' && room.nextAt) {
@@ -1181,6 +1259,7 @@ DrawGuessHub.routes = {
   'ydwg.leave': 'leave',
   'ydwg.ready': 'ready',
   'ydwg.settings': 'settings',
+  'ydwg.giveHost': 'giveHost',  // 房主主动转让房主（连同 hostKey 一起换）
   'ydwg.role': 'role',
   'ydwg.grab': 'grab',
   'ydwg.start': 'start',
@@ -1188,6 +1267,7 @@ DrawGuessHub.routes = {
   'ydwg.draw': 'draw',
   'ydwg.canvas': 'canvas',
   'ydwg.hint': 'hint',
+  'ydwg.giveup': 'giveup',      // 画者放弃绘画（客户端二次确认，开局满 1 分钟才可点）
   'ydwg.swap': 'swap',
   'ydwg.guess': 'guess',
   'ydwg.chat': 'chat',

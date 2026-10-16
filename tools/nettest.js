@@ -4,7 +4,8 @@
  * 覆盖：静态资源、房间创建/加入、局数设置、开局、状态广播、移动同步、
  *       局数推进与最终结算、五子棋邀请/落子/悔棋/胜负判定、断线清理。
  *
- * 提示：服务端可用 WB_ROUND_LIMIT=6 压缩单局时限，让本脚本快速跑完多局。
+ * 提示：服务端可用 WB_ROUND_LIMIT=6 压缩单局时限、WB_DROP_GRACE_MS=800 压缩
+ *       "掉线宽限期"，让本脚本快速跑完多局/多段掉线场景。
  */
 const WSURL = process.argv[2] || 'ws://127.0.0.1:8080/ws';
 const HTTP = WSURL.replace(/^ws/, 'http').replace(/\/ws$/, '');
@@ -607,33 +608,116 @@ async function settle(ms) { await sleep(ms || 220); }
   ok('第三局又换回来（不会固定一方执黑）', n3.you === firstYou,
     '第二局邀请方 you=' + n1.you + '，第三局 you=' + n3.you);
 
-  console.log('\n== K. 对局中有人退出 → 整场结束 ==');
+  console.log('\n== K. 掉线给宽限期（不立刻结束）；主动退出才结束 ==');
+  /*
+   * 规则在 2026-10-15 变了：以前连接一断就当场把人踢出房间，
+   * 于是"刚发出去的房间号别人加不进来"（房间已经被销毁）、刷新一下就丢局。
+   * 现在断线只标记掉线、留一段时间宽限，带着同一把身份钥匙回来座位照旧。
+   */
   const e1 = await client('E1'), e2 = await client('E2');
   await e1.wait('hello'); await e2.wait('hello');
-  e1.send({ t: 'tank.create' });
+  e1.send({ t: 'tank.create', key: 'keyE1' });
   const cr2 = await e1.wait('tank.created');
-  e2.send({ t: 'tank.join', code: cr2.code });
+  e2.send({ t: 'tank.join', code: cr2.code, key: 'keyE2' });
   await settle();
   e2.send({ t: 'tank.ready', ready: true });
   await settle();
   e1.send({ t: 'tank.start' });
   await e1.wait('tank.round');
   await settle(400);
-  e2.close();                       // 对局进行中退出
-  let ab = null;
-  try { ab = await e1.wait('tank.abort', 6000); } catch (err) { /* 超时 */ }
-  ok('对局中有人退出 → 其他人收到结束通知', !!ab && /离开/.test(ab.msg || ''), ab ? ab.msg : '未收到');
-  await sleep(500);
-  const stAb = await (await fetch(HTTP + '/api/status')).json();
-  ok('对局中途结束后房间被回收', stAb.tankRooms === 0, 'tankRooms=' + stAb.tankRooms);
-  e1.close();
-  await sleep(300);
 
-  console.log('\n== J. 断线清理 ==');
+  // ① 掉线：屋里其他人收到「掉线」提示，房间与对局都不立刻结束
+  e2.close();
+  let drop = null;
+  try { drop = await e1.wait('tank.dropped', 3000); } catch (err) { /* 超时 */ }
+  ok('掉线时其他人收到「掉线」提示（不是直接结束）', !!drop, drop ? drop.msg : '未收到');
+  const stDrop = await (await fetch(HTTP + '/api/status')).json();
+  ok('掉线后房间仍在（宽限期内不回收，房间号继续有效）', stDrop.tankRooms === 1, 'tankRooms=' + stDrop.tankRooms);
+
+  // ② 带着同一把钥匙回来（相当于刷新页面）→ 座位与本局场景原样还回来
+  const e2b = await client('E2b');
+  await e2b.wait('hello');
+  e2b.send({ t: 'tank.resume', key: 'keyE2' });
+  let back = null;
+  try { back = await e2b.wait('tank.joined', 3000); } catch (err) { /* 超时 */ }
+  ok('刷新/重连后能回到原房间', !!back && back.code === cr2.code && back.resumed === true,
+    back ? JSON.stringify(back) : '未收到');
+  let roundBack = null;
+  try { roundBack = await e2b.wait('tank.round', 3000); } catch (err) { /* 超时 */ }
+  ok('回到进行中的对局：补发本局场景', !!roundBack, roundBack ? ('第 ' + roundBack.index + ' 局') : '未收到');
+
+  // ③ 主动退出（非房主）→ 本场结束、房间回收
+  e2b.send({ t: 'tank.leave' });
+  let ab = null;
+  try { ab = await e1.wait('tank.abort', 4000); } catch (err) { /* 超时 */ }
+  ok('主动退出 → 其他人收到结束通知', !!ab && /离开/.test(ab.msg || ''), ab ? ab.msg : '未收到');
+  await sleep(400);
+  const stAb = await (await fetch(HTTP + '/api/status')).json();
+  ok('中途退出后房间被回收', stAb.tankRooms === 0, 'tankRooms=' + stAb.tankRooms);
+
+  // ④ 房主离开 → 房间当场解散，其余人收到通知
+  const e3 = await client('E3'), e4 = await client('E4');
+  await e3.wait('hello'); await e4.wait('hello');
+  e3.send({ t: 'tank.create', key: 'keyE3' });
+  const cr3 = await e3.wait('tank.created');
+  e4.send({ t: 'tank.join', code: cr3.code, key: 'keyE4' });
+  await settle();
+  e3.send({ t: 'tank.leave' });
+  let dis = null;
+  try { dis = await e4.wait('tank.abort', 3000); } catch (err) { /* 超时 */ }
+  ok('房主离开 → 房间当场解散并通知其他人', !!dis && /解散/.test(dis.msg || ''), dis ? dis.msg : '未收到');
+  await sleep(300);
+  const stHost = await (await fetch(HTTP + '/api/status')).json();
+  ok('房主离开后房间被立刻回收', stHost.tankRooms === 0, 'tankRooms=' + stHost.tankRooms);
+
+  /*
+   * ⑤ 用户报的「房间号失效」：房主把房间号发出去后自己掉了个线（刷新/网络抖一下），
+   *    老朋友拿着这个号来加 —— 以前房间已经随掉线被销毁，于是「别人加不进来」，
+   *    房主重建一个又好了。现在掉线只进宽限期，房间号继续有效。
+   *    注意这里要停在**大厅**：已开局的房间本来就进不去，别把状态校验的拒绝算进来。
+   */
+  const f1 = await client('F1'), f2 = await client('F2');
+  await f1.wait('hello'); await f2.wait('hello');
+  f1.send({ t: 'tank.create', key: 'keyF1' });
+  const crF = await f1.wait('tank.created');
+  f1.close();                                   // 房主掉线（大厅状态）
+  await sleep(300);
+  f2.send({ t: 'tank.join', code: crF.code, key: 'keyF2' });
+  let joinF = null;
+  try { joinF = await f2.wait('tank.joined', 3000); } catch (err) { /* 超时 */ }
+  ok('房主掉线后，别人拿原房间号照样能加入（房间号不失效）',
+    !!joinF && joinF.code === crF.code,
+    joinF ? ('加入 ' + joinF.code) : '加入失败');
+  const f1b = await client('F1b');              // 房主带着钥匙回来
+  await f1b.wait('hello');
+  f1b.send({ t: 'tank.resume', key: 'keyF1' });
+  let backF = null;
+  try { backF = await f1b.wait('tank.joined', 3000); } catch (err) { /* 超时 */ }
+  ok('房主回来后拿回自己的座位', !!backF && backF.resumed === true,
+    backF ? JSON.stringify(backF) : '未收到');
+  f2.send({ t: 'tank.leave' });
+  await sleep(300);
+  const stF = await (await fetch(HTTP + '/api/status')).json();
+  ok('非房主离开不解散房间（房主还在）', stF.tankRooms === 1, 'tankRooms=' + stF.tankRooms);
+  f1b.send({ t: 'tank.leave' });          // 房主也走 → 当场回收
+  await sleep(300);
+  const stF2 = await (await fetch(HTTP + '/api/status')).json();
+  ok('房主离开后房间回收', stF2.tankRooms === 0, 'tankRooms=' + stF2.tankRooms);
+  f2.close();
+  f1b.close();
+  await sleep(200);
+
+  e1.close();
+  await sleep(200);
+
+  console.log('\n== J. 断线清理（等宽限期走完） ==');
   g1.close(); g2.close(); a.close(); b.close();
-  await sleep(600);
+  e2b.close(); e3.close(); e4.close();
+  await sleep(2200);
   const st2 = await (await fetch(HTTP + '/api/status')).json();
-  ok('断线后在线人数与房间数回落', st2.online === 0 && st2.tankRooms === 0 && st2.gomokuMatches === 0, JSON.stringify(st2));
+  ok('宽限期过后，断线的人被清理、房间回落',
+    st2.online === 0 && st2.tankRooms === 0 && st2.gomokuMatches === 0,
+    'online=' + st2.online + ' tankRooms=' + st2.tankRooms + ' gomokuMatches=' + st2.gomokuMatches);
 
   console.log('\n' + (fails === 0 ? ('全部通过 ✔  (' + passes + ' 项)') : (fails + ' 项失败，' + passes + ' 项通过')));
   process.exit(fails === 0 ? 0 : 1);

@@ -12,6 +12,18 @@
 
 const SIZE = 15;
 const INVITE_TIMEOUT = 30000;
+/**
+ * 掉线宽限期。
+ * 断网、切后台、刷新页面、服务端抖一下都会让 WebSocket 断掉；以前一断就把对局销毁，
+ * 于是「页面还停在棋盘上、连接徽标还是绿的、聊天也正常，但每一手都被服务端静默忽略」
+ * —— 看起来就是「页面卡死，下不了棋」。
+ * 现在断线只是把人标记成 dropped，等这么久还没回来才真正结束对局。
+ */
+const DROP_GRACE_MS = (function () {
+  // 自动化测试要能在几百毫秒内把宽限期走完（和 WB_ROUND_LIMIT 一个路子）
+  const v = parseFloat(process.env.WB_DROP_GRACE_MS);
+  return (isFinite(v) && v >= 200) ? v : 30000;
+})();
 
 function emptyBoard() {
   return new Array(SIZE * SIZE).fill(0);
@@ -22,10 +34,16 @@ class GomokuHub {
     this.ctx = ctx;
     this.matches = new Map();   // matchId -> match
     this.byClient = new Map();  // clientId -> matchId
+    this.byKey = new Map();     // 身份钥匙 -> matchId（刷新/断线重连靠它把对局认回来）
+    this.clientKey = new Map(); // clientId -> 这个连接报上来的钥匙
     this.nextId = 1;
     this.pending = new Map();   // matchId -> timer
     // 「两人之间上一局谁执黑」的记忆（key = 双方邀请码排序后拼接），用来实现黑白轮换
     this.colorMemory = new Map();
+    // 宽限期到点就收尾（没人掉线时什么都不做）
+    const every = Math.max(200, Math.min(5000, Math.round(DROP_GRACE_MS / 4)));
+    const sweep = setInterval(() => this._sweepDropped(), every);
+    if (sweep.unref) sweep.unref();
   }
 
   matchCount() { return this.matches.size; }
@@ -33,7 +51,10 @@ class GomokuHub {
   stats() { return { gomokuMatches: this.matches.size }; }
 
   /* ---------- 注册 ---------- */
-  register(client) {
+  register(client, msg) {
+    const key = this._key(msg);
+    if (key) this.clientKey.set(client.id, key);
+
     this.ctx.send(client, {
       t: 'gomoku.code',
       code: client.inviteCode,
@@ -41,6 +62,63 @@ class GomokuHub {
       name: client.name,
       online: this.ctx.clients.size
     });
+
+    // 带着同一把钥匙回来（刷新页面 / 断线重连）→ 把原来的对局还给他
+    if (this._reattach(client, key)) return;
+
+    /*
+     * 没认回来，但客户端说自己还在某一局里 → 说明这一局在服务端已经结束了
+     * （宽限期过了、或者对手已经走了）。如实告诉它，让页面回到菜单，
+     * 而不是继续显示一张"点哪儿都没反应"的棋盘。
+     */
+    if (msg && msg.matchId) {
+      this.ctx.send(client, { t: 'gomoku.gone', matchId: msg.matchId, msg: '这一局已经结束了' });
+    }
+  }
+
+  /** 从消息里取身份钥匙（纯净成一个短字符串，别让它撑爆内存） */
+  _key(msg) {
+    const k = msg && msg.key;
+    return (typeof k === 'string' && k) ? k.slice(0, 64) : '';
+  }
+
+  /**
+   * 按身份钥匙把对局挂回这条新连接。
+   * 典型场景：玩家刷新了网页、或者网络抖了一下 —— 旧连接已经断了、服务端把人标成
+   * dropped，新连接一上来就调这里，座位、棋盘、悔棋次数全部原样奉还。
+   * 返回 true 表示确实挂回去了。
+   */
+  _reattach(client, key) {
+    if (!key) return false;
+    const mid = this.byKey.get(key);
+    if (!mid) return false;
+    const match = this.matches.get(mid);
+    if (!match) { this.byKey.delete(key); return false; }
+    if (match.state !== 'playing') return false;
+    const side = match.black.key === key ? match.black : (match.white.key === key ? match.white : null);
+    if (!side) return false;
+
+    /*
+     * 旧连接可能还挂着（刷新时新页面常常先连上、旧连接稍后才断），先摘干净。
+     * 注意：摘完之后两个座位都要重新挂上 —— 只挂重连的这一方会让**对手**
+     * 丢掉索引，他的每一手都会被静默忽略，那正是我们要修的"卡死"。
+     */
+    for (const p of [match.black, match.white]) if (p.id) this.byClient.delete(p.id);
+    side.id = client.id;
+    side.dropped = false;
+    side.dropAt = 0;
+    for (const p of [match.black, match.white]) if (p.id) this.byClient.set(p.id, match.id);
+    this.clientKey.set(client.id, key);
+    this._clearTimer(match.id);          // 万一还在邀请计时里
+
+    /*
+     * 用 gomoku.start 补发，而不是 gomoku.state：
+     * 刷新后客户端是一张白纸（mode 还是 null），只有 start 才会把它整体带回对局
+     * （进入棋盘界面、挂上对局聊天频道）。对面的玩家也会因为在线状态变化收到新状态。
+     */
+    this._sendState(match, { t: 'gomoku.start' });
+    this.ctx.send(client, { t: 'gomoku.reattached', matchId: match.id });
+    return true;
   }
 
   /* ---------- 邀请 ---------- */
@@ -69,8 +147,9 @@ class GomokuHub {
     const match = {
       id,
       pairKey,
-      black: { id: blackSide.id, name: blackSide.name, code: blackSide.inviteCode },
-      white: { id: whiteSide.id, name: whiteSide.name, code: whiteSide.inviteCode },
+      // key = 双方各自的「身份钥匙」，刷新/重连后靠它把对局认回来
+      black: { id: blackSide.id, name: blackSide.name, code: blackSide.inviteCode, key: this.clientKey.get(blackSide.id) || '', dropped: false, dropAt: 0 },
+      white: { id: whiteSide.id, name: whiteSide.name, code: whiteSide.inviteCode, key: this.clientKey.get(whiteSide.id) || '', dropped: false, dropAt: 0 },
       inviteeId: target.id,     // 被邀请的人（与黑白无关，只用于接受/拒绝邀请）
       inviterId: client.id,     // 发起邀请的人（拒绝/超时的提示要发给他，而不是发给执黑方）
       board: emptyBoard(),
@@ -84,6 +163,7 @@ class GomokuHub {
     this.matches.set(id, match);
     this.byClient.set(client.id, id);
     this.byClient.set(target.id, id);
+    for (const p of [match.black, match.white]) if (p.key) this.byKey.set(p.key, id);
 
     this.ctx.send(client, { t: 'gomoku.waiting', matchId: id, to: { name: target.name, code: target.inviteCode } });
     this.ctx.send(target, {
@@ -141,6 +221,8 @@ class GomokuHub {
         1: { name: match.black.name, code: match.black.code, online: !!this._c(match.black.id) },
         2: { name: match.white.name, code: match.white.code, online: !!this._c(match.white.id) }
       },
+      // 谁掉线了、还在宽限期里等重连 —— 客户端据此显示「对方掉线，等待重连…」
+      dropped: { 1: !!match.black.dropped, 2: !!match.white.dropped },
       last: match.moves.length ? match.moves[match.moves.length - 1] : null,
       win: match.win,
       state: match.state,
@@ -320,25 +402,70 @@ class GomokuHub {
     }
   }
 
+  /**
+   * 连接断了（刷新网页 / 关标签页 / 断网 / 切后台）：
+   * 先别急着结束对局 —— 原因见 DROP_GRACE_MS 那段说明。这里只把人标成「掉线」，
+   * 并立刻告诉对手「他掉线了，正在等他回来」；宽限期到了还没回来，才由
+   * _sweepDropped 正式收尾。
+   */
   onClose(client) {
     const id = this.byClient.get(client.id);
     const match = id ? this.matches.get(id) : null;
-    if (match && match.state === 'playing') {
-      const me = match.black.id === client.id ? 1 : 2;
-      const opp = me === 1 ? match.white : match.black;
-      const c = this._c(opp.id);
-      if (c) {
-        this.ctx.send(c, { t: 'gomoku.error', msg: '对方已掉线' });
-        this.ctx.send(c, { t: 'gomoku.oppLeft', msg: '对方已掉线，对局结束' });
-      }
-      match.state = 'over';
-    } else if (!match) {
-      // 没有进行中的对局：可能有已结束但仍在回收队列里的对局
-      this._sweep(client);
+    if (!match) { this._sweep(client); return; }
+
+    const me = match.black.id === client.id ? 1 : (match.white.id === client.id ? 2 : 0);
+    this.byClient.delete(client.id);
+
+    // 还在等对方接受邀请：这局还没有任何对局数据，直接作废
+    if (match.state === 'pending') {
+      const other = me === 1 ? match.white : match.black;
+      const c = this._c(other.id);
+      if (c) this.ctx.send(c, { t: 'gomoku.error', msg: '对方已离开，邀请取消' });
+      this._destroy(match.id);
       return;
     }
-    for (const p of [match.black, match.white]) this.byClient.delete(p.id);
-    this._destroy(match.id);
+    if (match.state !== 'playing') return;
+
+    const side = me === 1 ? match.black : match.white;
+    side.dropped = true;
+    side.dropAt = Date.now();
+    this._notify(match, { t: 'gomoku.drop', p: me, name: side.name, grace: DROP_GRACE_MS });
+    this._sendState(match);       // 对手那边会看到「对方掉线，等待重连…」
+  }
+
+  /** 宽限期到了还没回来 → 对局结束，通知留下的人 */
+  _sweepDropped() {
+    const now = Date.now();
+    for (const [mid, m] of Array.from(this.matches)) {
+      /*
+       * 已经打完的局：两个人都掉线了就顺手回收。
+       * （原来是死等 10 分钟；结果"关掉页面之后服务端还留着好几局已结束的对局"，
+       *   看着像没清理干净。客户端的结果界面用的是自己的状态，不需要服务端留着。）
+       */
+      if (m.state === 'over') {
+        const anyLive = [m.black, m.white].some(p => !!this._c(p.id));
+        if (!anyLive) this._destroy(mid);
+        continue;
+      }
+      if (m.state !== 'playing') continue;
+      let gone = 0;
+      for (const p of [1, 2]) {
+        const side = p === 1 ? m.black : m.white;
+        if (side.dropped && now - (side.dropAt || 0) >= DROP_GRACE_MS) { gone = p; break; }
+      }
+      if (!gone) continue;
+      const goneSide = gone === 1 ? m.black : m.white;
+      const opp = gone === 1 ? m.white : m.black;
+      const c = this._c(opp.id);
+      if (c) {
+        this.ctx.send(c, { t: 'gomoku.error', msg: '对方掉线太久，对局结束' });
+        this.ctx.send(c, { t: 'gomoku.oppLeft', msg: '对方掉线超时，对局结束' });
+        m.state = 'over';
+        m.win = { p: gone === 1 ? 2 : 1, line: [], id: goneSide.id, resign: true };
+        this._sendState(m);
+      }
+      this._destroy(mid);
+    }
   }
 
   _destroy(id) {
@@ -347,6 +474,10 @@ class GomokuHub {
     if (m) {
       this.byClient.delete(m.black.id);
       this.byClient.delete(m.white.id);
+      // 钥匙索引也要一起清，否则下次带着旧钥匙回来会指到一个已经不存在的对局
+      for (const p of [m.black, m.white]) {
+        if (p.key && this.byKey.get(p.key) === id) this.byKey.delete(p.key);
+      }
     }
     this.matches.delete(id);
   }

@@ -564,4 +564,7 @@ Friends.routes = {
   'friends.refresh': 'refresh'
 };
 
+/* 落盘文件位置暴露给启动横幅：让开服的人一眼看到"数据存在哪" */
+Friends.DATA_FILE = DATA_FILE;
+
 module.exports = Friends;

@@ -184,10 +184,17 @@ async function getTarget(port, retry) {
     ok('卡片附属入口与接口声明一致',
       homeCards.extra.map(a => a.join('|')).join(',') === homeCards.wantExtra.join(','),
       JSON.stringify(homeCards.extra));
-    ok('卡片上确实有附属入口（如关卡编辑器）', homeCards.extra.some(a => a.length > 0),
+    /*
+     * 「附属入口」（如关卡编辑器）由各游戏自己声明，主页照着渲染。
+     * 不能硬断言"必须有"：方块躲避被 Hub.hidden 收起后，主页上就没有带附属入口的卡片了 ——
+     * 该断言的对象应该是"接口声明的那些入口，卡片上都渲染了、且都能打开"。
+     */
+    const wantAny = homeCards.wantExtra.some((x) => x && x.length > 0);
+    ok('接口声明了附属入口时，卡片上就渲染出来（没有就允许为空）',
+      !wantAny || homeCards.extra.some((a) => a.length > 0),
       JSON.stringify(homeCards.extra));
     ok('附属入口指向的页面都能打开（没有死链）',
-      homeCards.extraCodes.length > 0 && homeCards.extraCodes.every(c => c === 200),
+      homeCards.extraCodes.every(c => c === 200),
       JSON.stringify(homeCards.extraCodes));
     const badge = await evalJs("document.getElementById('netBadge').textContent");
     ok('WebSocket 已连接', /已连接/.test(badge), '状态：' + badge);

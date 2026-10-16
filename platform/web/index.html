@@ -12,9 +12,9 @@
   .hub-tips { max-width: 1080px; margin: 34px auto 0; padding: 0 24px; }
   .tip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
   .tip-grid .panel { padding: 18px 20px; }
-  .tip-grid h4 { margin: 0 0 10px; font-size: 14px; color: #9dc0ff; }
+  .tip-grid h4 { margin: 0 0 10px; font-size: 14px; color: var(--accent); }
   .tip-grid p { margin: 0; font-size: 13px; color: var(--dim); line-height: 1.85; }
-  .tip-grid code { background: rgba(76,141,255,.14); color: #9dc0ff; padding: 1px 7px; border-radius: 6px; font-size: 12.5px; }
+  .tip-grid code { background: rgba(76,141,255,.14); color: var(--accent); padding: 1px 7px; border-radius: 6px; font-size: 12.5px; }
   .server-line { text-align: center; margin-top: 30px; font-size: 13px; color: var(--dim2); }
 
   /* 游戏卡片由 /api/status 动态渲染，插画是每个游戏自己带的一张 svg */
@@ -24,6 +24,8 @@
     width: 100%; height: 100%; background: #0f1420;
     color: #4c8dff; font-size: 42px; font-weight: 800; letter-spacing: 2px;
   }
+  /* 浅色主题：兜底插画也是写死的深色块，跟着卡片一起变浅 */
+  body.wb-light .game-card .art .art-fallback { background: #e8edf6; color: #2f6fe0; }
   .hub-empty { grid-column: 1 / -1; text-align: center; padding: 46px 24px; color: var(--dim); font-size: 14px; line-height: 2; }
 
   /* 让别的电脑访问的地址条 */
@@ -41,6 +43,17 @@
   }
   .lan-banner .lan-note { font-size: 12.5px; color: var(--dim); margin-top: 7px; }
   .lan-banner.multi .lan-url { font-size: 18px; }
+  /*
+   * 浅色主题（设置里可选）：上面这几处是为深色底配的 —— 白字、浅绿标题压在白底上
+   * 几乎看不见（实测对比度 1.1）。这里单独给一套能看清的。
+   */
+  body.wb-light .lan-banner {
+    background: linear-gradient(180deg, rgba(15,150,104,.12), rgba(15,150,104,.05));
+    border-color: rgba(15,150,104,.42);
+    box-shadow: 0 8px 22px rgba(30,44,68,.12);
+  }
+  body.wb-light .lan-banner .lan-title { color: #0b7a55; }
+  body.wb-light .lan-banner .lan-url { color: #10233b; }
 </style>
 </head>
 <body>

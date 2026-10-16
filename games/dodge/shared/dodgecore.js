@@ -304,17 +304,17 @@
       });
     });
 
-    // 障碍轨迹与设施重叠只作提醒：内核已保障玩家在安全区（出生/复活/终点）内不会死亡
+    // 障碍轨迹与设施重叠的提醒：出生点/复活点不再是安全区（站里面照样被撞死），终点保留免死
     (level.obstacles || []).forEach(function (o) {
       (o.path || []).forEach(function (p) {
         spawns.forEach(function (s) {
-          if (s.col === p.col && s.row === p.row) warnings.push('出生点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在出生区内不会被撞死，但一离开就可能挨撞，建议避开');
+          if (s.col === p.col && s.row === p.row) warnings.push('出生点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 出生点不是安全区，出生/复活落在这里照样会被撞死，建议避开');
         });
         checkpoints.forEach(function (s) {
-          if (s.col === p.col && s.row === p.row) warnings.push('复活点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在复活区内不会被撞死，建议避开');
+          if (s.col === p.col && s.row === p.row) warnings.push('复活点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 复活点不是安全区，复活到这里只有 0.5 秒无敌，过了照样被撞死，建议避开');
         });
         goals.forEach(function (s) {
-          if (s.col === p.col && s.row === p.row) warnings.push('终点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 站在终点区内不会被撞死，建议避开');
+          if (s.col === p.col && s.row === p.row) warnings.push('终点 (' + s.col + ',' + s.row + ') 在障碍「' + (o.id || '') + '」的轨迹上 —— 终点区内不会被撞死（到达优先），不影响通关');
         });
       });
     });
@@ -367,7 +367,8 @@
       static: data.path.length === 1
     };
     // 圆周旋转：圆心是 path[0]（对齐方式可选「格心」或「网格十字交点」），障碍绕着它转圈。
-    // 圆心只是轨迹锚点，不占空间 —— 可以落在出生点/复活点/终点上（安全区由 inSafeZone 兜底）。
+    // 圆心只是轨迹锚点，不占空间 —— 可以落在出生点/复活点/终点上
+    // （注意：出生/复活点不保命，转圈扫过去照样撞死人，只有终点区免死）。
     if (data.orbit) {
       var cen = (data.centerSnap === 'cross') ? gridToPixel(data.path[0].col, data.path[0].row) : first;
       o.orbit = { radius: data.orbit.radius, cw: data.orbit.cw !== false };
@@ -484,23 +485,21 @@
     return null;
   }
 
-  /* ================= 安全区（底层保障） ================= */
+  /* ================= 安全区（只有终点免死） ================= */
 
   /**
-   * 玩家方格（含边界线）是否处在「安全区」里：出生点 / 复活点 / 终点的任意一格。
-   * 底层铁律：障碍的轨迹可以随便画（圆心不占空间、路径可以穿过任何格子），
-   * 但只要玩家站在安全区内 —— 哪怕方块边缘只蹭到安全格的边界线 —— 也绝不因障碍死亡。
-   * 编辑器因此不必再限制障碍路径经过设施，游戏侧也不会出现"复活即死"。
+   * 玩家方格（含边界线）是否处在「终点区」里：终点区域的任意一格。
+   * 出生点 / 复活点**不是**安全区：站在里面被圆形障碍碰到照样死亡
+   * （复活只有 RESPAWN_INVULN 的短暂无敌，过了就正常判死）。
+   * 终点保留免死：走到终点格边缘那一瞬，到达判定紧接着发生，不该被同帧的障碍抢杀。
+   * 障碍的轨迹依旧可以随便画（圆心不占空间、路径可以穿过任何格子）。
    */
   function inSafeZone(level, x, y) {
     var half = PLAYER_SIZE / 2;
-    var lists = [level.spawns, level.checkpoints, level.goals];
-    for (var i = 0; i < lists.length; i++) {
-      var list = lists[i] || [];
-      for (var k = 0; k < list.length; k++) {
-        var cx = list[k].col * GRID_SIZE, cy = list[k].row * GRID_SIZE;
-        if (x + half >= cx && x - half <= cx + GRID_SIZE && y + half >= cy && y - half <= cy + GRID_SIZE) return true;
-      }
+    var list = level.goals || [];
+    for (var k = 0; k < list.length; k++) {
+      var cx = list[k].col * GRID_SIZE, cy = list[k].row * GRID_SIZE;
+      if (x + half >= cx && x - half <= cx + GRID_SIZE && y + half >= cy && y - half <= cy + GRID_SIZE) return true;
     }
     return false;
   }
@@ -607,7 +606,7 @@
       }
     }
 
-    // 碰到圆形障碍 → 死亡（无敌期内不判定；站在出生/复活/终点安全区内永远不判死）
+    // 碰到圆形障碍 → 死亡（无敌期内不判定；出生/复活点不保命，只有终点区内不判死）
     if (player.invuln <= 0) {
       var hit = hitsObstacle(world, player.x, player.y, 0);
       if (hit && !inSafeZone(level, player.x, player.y)) {
@@ -733,7 +732,7 @@
     // 出生点已经是个区域：从区域里离落脚点最近的那一格开始搜
     var startCell = nearestCell(spawnRegs[0], spawnRegs[0].anchor.x, spawnRegs[0].anchor.y);
     var spawnPos = spawnRegs[0].anchor;
-    // 与游戏同一套底层保障：安全区（出生/复活/终点）内永不判死
+    // 与游戏同一套判定：只有终点区免死，出生点/复活点上被扫到照样算死
     function safeAt(tick, x, y) {
       return inSafeZone(level, x, y) || playerSafeAt(frames[tick], x, y);
     }
@@ -887,7 +886,7 @@
     /* 碰撞 */
     rectCircleCollide: rectCircleCollide, playerRect: playerRect, boxBlockedAt: boxBlockedAt,
     hitsObstacle: hitsObstacle,
-    /* 安全区（出生/复活/终点内不判死）与圆周圆心 */
+    /* 安全区（仅终点内不判死）与圆周圆心 */
     inSafeZone: inSafeZone, orbitCenter: orbitCenter,
     /* 关卡可通关性（编辑器与自检共用） */
     solveReachable: solveReachable, reachable: reachable, obstacleTimeline: obstacleTimeline,

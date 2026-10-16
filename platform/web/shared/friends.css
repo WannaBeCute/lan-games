@@ -60,7 +60,7 @@
 /* 邀请组队的小菜单（锚在按钮下方） */
 .fb-team-menu {
   position: absolute; z-index: 5; margin-top: 6px; right: 0; min-width: 180px;
-  background: linear-gradient(180deg, #1a2231, #131922); border: 1px solid var(--line2);
+  background: linear-gradient(180deg, var(--float-1, #1a2231), var(--float-2, #131922)); border: 1px solid var(--line2);
   border-radius: 12px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 4px;
 }
 .fb-team-menu button {
@@ -93,7 +93,10 @@
 .fb-pop {
   flex: 0 0 auto;
   width: 290px; padding: 13px 15px;
-  background: linear-gradient(180deg, #1a2231, #131922);
+  background: linear-gradient(180deg, var(--float-1, #1a2231), var(--float-2, #131922));
+  /* 必须显式给文字色：以前靠继承，在"整页亮色"的游戏里会继承到深色字，
+     压在深色浮层上就是一团黑（气泡和文字都看不清）。 */
+  color: var(--text);
   border: 1px solid var(--line2); border-radius: 14px; box-shadow: var(--shadow);
   animation: fbIn .18s ease;
 }
@@ -116,10 +119,14 @@
 .fb-chat {
   width: 302px; height: 384px; flex: 0 0 auto; max-height: calc(100vh - 28px);
   display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #1a2231, #131922);
+  background: linear-gradient(180deg, var(--float-1, #1a2231), var(--float-2, #131922));
+  /* 同上：显式给文字色，别去继承页面的（亮色游戏页会把字染成深色，压深底看不清） */
+  color: var(--text);
   border: 1px solid var(--line2); border-radius: 14px; box-shadow: var(--shadow);
   overflow: hidden; animation: fbIn .18s ease;
 }
+/* 「对方」的气泡：底色跟着主题走时，文字很可能跟底色同色系，这里再兜一道底 */
+.fb-chat .msg.other { color: var(--text); }
 /* 聊天控件也贴在左下角时（它俩本来就住同一角），**小窗**往右让开，别糊在控件上。
    注意只让小窗、不让 .fb-pop（邀请弹窗）：
    停靠区是"贴底往上长"的，弹窗总是排在所有小窗**上面**，本来就在控件上方那一段，

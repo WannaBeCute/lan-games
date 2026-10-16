@@ -560,11 +560,11 @@ async function runTests(base) {
   painterClient.clear();
   painterClient.send({ t: 'ydwg.hint', kind: 'len' });
   const hinted2 = await painterClient.wait('ydwg.hint', 1500);
-  ok(!!hinted2 && hinted2.cost === 5, '「几个字」提示代价 5 分（比类型更贵）', hinted2 ? String(hinted2.cost) : '');
+  ok(!!hinted2 && hinted2.cost === 3, '「几个字」提示代价也是 3 分（三档统一）', hinted2 ? String(hinted2.cost) : '');
   painterClient.clear();
   painterClient.send({ t: 'ydwg.hint', kind: 'origin' });
   const hinted3 = await painterClient.wait('ydwg.hint', 1500);
-  ok(!!hinted3 && hinted3.cost === 8, '「来自哪里」提示代价 8 分（最贵）', hinted3 ? String(hinted3.cost) : '');
+  ok(!!hinted3 && hinted3.cost === 3, '「来自哪里」提示代价还是 3 分（不给"最贵"的档位）', hinted3 ? String(hinted3.cost) : '');
   ok(hinted3 && hinted3.text.length > 0, '「来自哪里」有内容', hinted3 ? hinted3.text : '');
   ok(hinted2 && hinted2.text === secret.word.length + ' 个字', '「几个字」给的是字数', hinted2 ? hinted2.text : '');
 
@@ -641,10 +641,10 @@ async function runTests(base) {
   const tickNow = painterClient.last('ydwg.tick');
   const ratio = tickNow ? Math.max(0, 1 - (tickNow.total - tickNow.left) / tickNow.total) : 1;
   const expectedRaw = 15 + Math.round(15 * ratio);
-  // 换题会把提示的代价一起重置（新题重新算），所以这里只剩 2 次换题的 4 分代价
-  ok(painterGain && Math.abs(painterGain.pts - Math.max(0, expectedRaw - 4)) <= 1,
-    '换题重置了提示代价，只扣 2 次换题的 4 分；扣分在猜中时一次性结算',
-    painterGain ? ('实得 ' + painterGain.pts + '，期望约 ' + Math.max(0, expectedRaw - 4) + '（未扣分前 ' + expectedRaw + '）') : '');
+  // 换题会把提示代价一起重置（新题重新算），而且**换题本身不扣分** —— 所以这里就是满额
+  ok(painterGain && Math.abs(painterGain.pts - Math.max(0, expectedRaw)) <= 1,
+    '换题不扣分（换题只重置提示代价），画家实得 = 基础分',
+    painterGain ? ('实得 ' + painterGain.pts + '，期望约 ' + Math.max(0, expectedRaw) + '（未扣分前 ' + expectedRaw + '）') : '');
   ok(painterGain && painterGain.pts >= 0, '画家分数不会被扣成负数', painterGain ? String(painterGain.pts) : '');
 
   // ★ 本局信息面板要用：回合战报（谁画了什么、谁猜中了、用了多久）
@@ -1076,14 +1076,96 @@ async function runTests(base) {
       painterPts: painter ? painter.pts : -1,
       painterItems: painter ? painter.items.map((i) => i.label + ':' + i.pts).join(' | ') : '',
       hasHint: painter ? painter.items.some((i) => i.pts < 0 && /提示/.test(i.label)) : false,
-      hasSwap: painter ? painter.items.some((i) => i.pts < 0 && /换题/.test(i.label)) : false,
+      hasSwap: painter ? painter.items.some((i) => /换题/.test(i.label)) : false,
       guesserPts: guesser ? guesser.pts : -1
     };
   })();
   ok(detailProbe.hasDetail === true, '★ 回合结束会带上「得分明细」（结算弹窗的详细要用）', JSON.stringify(detailProbe));
-  ok(detailProbe.hasHint && detailProbe.hasSwap, '★ 明细里写清了扣分项：使用了提示 / 换题', detailProbe.painterItems);
+  ok(detailProbe.hasHint && detailProbe.hasSwap, '★ 明细里写清了「使用了提示」（扣分）与「换题」（不扣分）', detailProbe.painterItems);
   ok(detailProbe.painterPts >= 0, '★ 画者得分不会是负数', String(detailProbe.painterPts));
   ok(detailProbe.guesserPts > 0, '猜中的人有加分', String(detailProbe.guesserPts));
+
+  /* ---- 新规则：猜错扣 2 分 / 画者可放弃绘画（需对局满 1 分钟） ---- */
+  const ruleProbe = (function () {
+    const clients = new Map();
+    const out = [];
+    const hub = new Hub({ clients: clients, send: function (c, o) { if (c) out.push({ to: c.id, msg: o }); } });
+    const mk = (id, name, ip) => { const c = { id: id, name: name, ip: ip }; clients.set(id, c); return c; };
+    const A = mk(1, 'A', '10.0.0.1'), B = mk(2, 'B', '10.0.0.2');
+    hub.create(A, { key: 'rA' });
+    const code = [...hub.rooms.keys()].pop();
+    hub.join(B, { code: code, key: 'rB' });
+    const room = hub.rooms.get(code);
+    hub.settings(A, { rotate: false });
+    hub.role(A, { willDraw: true }); hub.role(B, { willDraw: false });
+    hub.ready(B, { ready: true });
+    hub.start(A);
+    room.nextAt = Date.now(); hub.step(0);
+
+    const painterId = room.turn.painterId;
+    const painter = painterId === A.id ? A : B;
+    const guesser = painterId === A.id ? B : A;
+    const guesserMember = room.members.find((m) => m.clientId === guesser.id);
+    // 注意：ctx.send 收集的是 { to, msg } 信封，这里要取出里面的 msg，别拿信封当消息用
+    const lastOut = (t) => { const hit = out.filter((o) => o.msg.t === t).pop(); return hit ? hit.msg : null; };
+
+    // ① 猜错扣 2 分（先把猜的人垫成 10 分，否则 0 分扣不出效果）
+    room.scores[guesser.id] = 10;
+    out.length = 0;
+    hub.guess(guesser, { text: '一定不是这个' });
+    const missMsg = lastOut('ydwg.guessMiss');
+    const afterMiss = room.scores[guesser.id];
+
+    // ② 已经是 0 分时不再往下扣（不能变成负分）
+    room.scores[guesser.id] = 0;
+    if (guesserMember) guesserMember.guessCdUntil = 0;      // 清掉冷却，好再猜一次
+    out.length = 0;
+    hub.guess(guesser, { text: '再错一次试试' });
+    const missMsg2 = lastOut('ydwg.guessMiss');
+    const atZero = room.scores[guesser.id];
+
+    // ③ 对局没满 1 分钟 → 拒绝放弃
+    out.length = 0;
+    hub.giveup(painter);
+    const early = lastOut('ydwg.error');
+
+    // ④ 非画者不能放弃
+    out.length = 0;
+    hub.giveup(guesser);
+    const notPainter = lastOut('ydwg.error');
+
+    // ⑤ 满 1 分钟后：画者放弃 → 公布答案 + 本回合立刻结束
+    room.matchStartAt = Date.now() - 61000;
+    const answer = room.turn.word.text;
+    out.length = 0;
+    hub.giveup(painter);
+    const gaveUp = lastOut('ydwg.giveup');
+    const turnEnd = lastOut('ydwg.turnEnd');
+
+    return {
+      missPenalty: missMsg ? missMsg.penalty : null,
+      afterMiss: afterMiss,
+      zeroPenalty: missMsg2 ? missMsg2.penalty : null,
+      atZero: atZero,
+      earlyRejected: early ? /1 分钟/.test(early.msg) : false,
+      nonPainterRejected: notPainter ? /只有画者/.test(notPainter.msg) : false,
+      gaveUp: !!gaveUp,
+      revealed: gaveUp ? gaveUp.word : '',
+      answer: answer,
+      turnEndReason: turnEnd ? turnEnd.reason : ''
+    };
+  })();
+  ok(ruleProbe.missPenalty === 2 && ruleProbe.afterMiss === 8,
+    '★ 猜错一次扣 2 分（10 分 → 8 分）',
+    'penalty=' + ruleProbe.missPenalty + ' 分数=' + ruleProbe.afterMiss);
+  ok(ruleProbe.zeroPenalty === 0 && ruleProbe.atZero === 0,
+    '★ 已经是 0 分时不再往下扣（不会扣成负分）',
+    'penalty=' + ruleProbe.zeroPenalty + ' 分数=' + ruleProbe.atZero);
+  ok(ruleProbe.earlyRejected === true, '★ 对局没满 1 分钟不能放弃绘画', '');
+  ok(ruleProbe.nonPainterRejected === true, '★ 只有画者能放弃绘画', '');
+  ok(ruleProbe.gaveUp === true && ruleProbe.revealed === ruleProbe.answer,
+    '★ 放弃绘画会公布答案', ruleProbe.revealed);
+  ok(ruleProbe.turnEndReason === 'giveup', '★ 放弃后本回合立刻结束（reason=giveup）', ruleProbe.turnEndReason);
 
   /* ---- 掉线宽限期：刷新网页不该把对局冲掉 ---- */
   const dropProbe = (function () {

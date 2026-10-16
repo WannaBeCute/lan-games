@@ -45,7 +45,13 @@
   // 不会出现"玩了半天连激光都没见到"。
   var POWERUP_GAP = 4, POWERUP_JITTER = 3;
   var POWERUP_TYPES = ['speed', 'rapid', 'triple', 'power', 'laser', 'stealth', 'shield', 'life'];
-  var DURATION = { speed: 18, rapid: 18, triple: 18, power: 18, laser: 14, stealth: 20, shield: 14, life: 0 };
+  /**
+   * 注意：power（穿甲弹）**不在这里** —— 它是"按发数"的弹药，不是按秒的 buff。
+   * 以前它也是 18 秒的时长，于是捡到之后一整个 18 秒都是穿甲弹，打不完，
+   * 看起来像"一直有穿甲弹"。现在是 AP_ROUNDS 发，打光就没了。
+   */
+  var DURATION = { speed: 18, rapid: 18, triple: 18, laser: 14, stealth: 20, shield: 14, life: 0 };
+  var AP_ROUNDS = 3;                // 捡到一个穿甲弹道具给几发（上限也是它）
   /** 图标要一眼看懂，不用抽象英文缩写 */
   var PU_LABEL = { speed: '⚡', rapid: '🔥', triple: '🔱', power: '🎯', laser: '🔫', stealth: '👻', shield: '🛡', life: '❤️' };
   var PU_COLOR = { speed: '#2fd39b', rapid: '#f5a524', triple: '#4c8dff', power: '#c85dff', laser: '#ff2e88', stealth: '#9b8cff', shield: '#54c7ec', life: '#ff5f6d' };
@@ -53,7 +59,7 @@
   /** 每个道具一句人话说明，用在 UI 提示里 */
   var PU_DESC = {
     speed: '移动速度 +45%', rapid: '开火间隔 -58%', triple: '一次射出 3 颗平行子弹',
-    power: '子弹可击毁钢墙并提速',
+    power: '给 ' + AP_ROUNDS + ' 发穿甲弹：能打穿钢墙、弹速更快，打光就没了',
     laser: '下一次开火变成贯穿光束，扫平沿途砖墙、钢墙与草丛（只能用一次）',
     stealth: '20 秒隐形；开火或捡到别的道具会立刻现形',
     shield: '免疫下一次伤害（挡 1 颗子弹）', life: '命数 +1'
@@ -419,6 +425,57 @@
   }
 
   /* ---------------- 坦克移动（旋转 + 前后） ---------------- */
+  /**
+   * 固定子步长（px）。
+   * 「贴着墙能停多近」必须和帧率无关 —— 否则客户端（比如 144Hz，每帧 0.7px）
+   * 与服务端（固定 60Hz，每帧 1.7px）会在墙边算出**不同的停靠点**，
+   * 差个 1px 上下；而客户端每收到一次快照（30Hz）就会把预测位置往回拽 35%，
+   * 下一帧预测又推回去 —— 看起来就是坦克顶着墙角时不停地抖，
+   * 炮口位置跟着晃，子弹自然也就"打偏"了。
+   * 统一成固定子步 + 二分贴墙之后，两边算出的停靠点一致（误差 ~0.02px）。
+   */
+  var MOVE_SUB = 0.6;
+  var CONTACT_ITER = 5;             // 二分次数：5 次 → 精度 1/32 步长
+
+  /**
+   * 从 (x,y) 沿 (dx,dy) 最多能走多少比例而不撞墙/撞车。
+   * 1 = 整步都能走；0 = 一步都走不了；中间值 = 刚好贴住障碍。
+   */
+  function freeFraction(world, x, y, dx, dy, id) {
+    if (canStand(world, x + dx, y + dy, id)) return 1;
+    var lo = 0, hi = 1;
+    for (var k = 0; k < CONTACT_ITER; k++) {
+      var mid = (lo + hi) / 2;
+      if (canStand(world, x + dx * mid, y + dy * mid, id)) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * 走一小步：
+   *   1) 整步走得通 → 直接走；
+   *   2) 走不通 → 分轴滑行（贴着墙也能顺着墙走），每个轴各自"贴到刚好为止"；
+   *   3) 两个轴都动不了（墙角死角）→ 沿原方向二分贴住墙，然后停下。
+   */
+  function moveStep(world, tank, sx, sy, id) {
+    if (canStand(world, tank.x + sx, tank.y + sy, id)) { tank.x += sx; tank.y += sy; return true; }
+
+    var moved = false;
+    if (Math.abs(sx) > 1e-9) {
+      var fx = freeFraction(world, tank.x, tank.y, sx, 0, id);
+      if (fx > 1e-6) { tank.x += sx * fx; moved = true; }
+    }
+    if (Math.abs(sy) > 1e-9) {
+      var fy = freeFraction(world, tank.x, tank.y, 0, sy, id);
+      if (fy > 1e-6) { tank.y += sy * fy; moved = true; }
+    }
+    if (moved) return true;
+
+    var f = freeFraction(world, tank.x, tank.y, sx, sy, id);
+    if (f > 1e-6) { tank.x += sx * f; tank.y += sy * f; }
+    return false;                    // 已经贴住墙：这一帧的移动到此为止
+  }
+
   function moveTank(world, tank, dt) {
     var inp = tank.input;
 
@@ -434,17 +491,11 @@
 
     var dx = dirX(tank.angle) * sp * dt;
     var dy = dirY(tank.angle) * sp * dt;
-    var steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 3));
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var steps = Math.max(1, Math.ceil(dist / MOVE_SUB));
     var sx = dx / steps, sy = dy / steps;
     for (var i = 0; i < steps; i++) {
-      var moved = false;
-      if (canStand(world, tank.x + sx, tank.y + sy, tank.id)) { tank.x += sx; tank.y += sy; moved = true; }
-      else {
-        // 贴墙滑行：分轴尝试
-        if (canStand(world, tank.x + sx, tank.y, tank.id)) { tank.x += sx; moved = true; }
-        if (canStand(world, tank.x, tank.y + sy, tank.id)) { tank.y += sy; moved = true; }
-      }
-      if (!moved) break;
+      if (!moveStep(world, tank, sx, sy, tank.id)) break;
     }
   }
 
@@ -589,13 +640,31 @@
 
     tank.cooldown = FIRE_CD * (tank.power.rapid > 0 ? 0.42 : 1);
     var a = tank.angle;
-    var px = tank.x + dirX(a) * (TANK_R + 1);
-    var py = tank.y + dirY(a) * (TANK_R + 1);
-    if (!circleFree(world, px, py, BULLET_R)) { px = tank.x; py = tank.y; }   // 贴墙时从车体中心出发
+    var mdx = dirX(a), mdy = dirY(a);
+    var px = tank.x + mdx * (TANK_R + 1);
+    var py = tank.y + mdy * (TANK_R + 1);
+    if (!circleFree(world, px, py, BULLET_R)) {
+      /*
+       * 顶着墙开火：炮口已经插进墙里了。以前是直接退回车体中心出生 ——
+       * 子弹从车底"倒退"半车身才出来，出生就撞墙反弹，看着像弹道歪了。
+       * 改成从车体中心朝炮口方向二分，取最远的自由点当出生点：
+       * 车体中心一定自由（坦克能站在那，BULLET_R 又比 TANK_R 小），所以必有解。
+       */
+      var mlo = 0, mhi = 1;
+      for (var mk = 0; mk < 6; mk++) {
+        var mmid = (mlo + mhi) / 2;
+        if (circleFree(world, tank.x + mdx * (TANK_R + 1) * mmid, tank.y + mdy * (TANK_R + 1) * mmid, BULLET_R)) mlo = mmid;
+        else mhi = mmid;
+      }
+      px = tank.x + mdx * (TANK_R + 1) * mlo;
+      py = tank.y + mdy * (TANK_R + 1) * mlo;
+    }
 
     var offs = (tank.power.triple > 0) ? [-9, 0, 9] : [0];
     var perpX = dirY(a), perpY = -dirX(a);
-    var power = tank.power.power > 0;
+    // 穿甲弹是按"发"算的（捡到给 AP_ROUNDS 发），不是按时间 —— 打一发少一发
+    var power = (tank.power.power | 0) > 0;
+    var shots = 0;
     for (i = 0; i < offs.length; i++) {
       if (tank.power.triple > 0 && mine + i >= MAX_BULLETS) break;
       world.bullets.push({
@@ -605,7 +674,9 @@
         speed: BULLET_SPEED * (power ? 1.15 : 1),
         age: 0, bounce: 0, armed: false
       });
+      shots++;
     }
+    if (power && shots > 0) tank.power.power = Math.max(0, (tank.power.power | 0) - 1);
     world.events.push({ k: 'shoot', x: tank.x, y: tank.y, a: a, id: tank.id });
     reveal(world, tank);            // 开火即现形
     return true;
@@ -711,10 +782,29 @@
               world.events.push({ k: 'spark', x: b.x, y: b.y });
             }
           }
-          // 反射：竖直面翻 x，水平面翻 y，角落原路返回
-          if (!okX && !okY) b.angle = norm(b.angle + Math.PI);
-          else if (!okX) b.angle = norm(-b.angle);
-          else b.angle = norm(Math.PI - b.angle);
+          /*
+           * 反射：以被击中那格的矩形接触法线为准 —— 竖直面翻 x、水平面翻 y、
+           * 正中角落（打到角点）原路返回。
+           * 以前拿 okX/okY 猜反射面：顶着凸出来的墙角斜射时，两个单轴位置都合法、
+           * 只有对角被挡，会落进"否则翻 y"的兜底 —— 子弹朝一个没道理的方向飞，
+           * 就是贴着墙角开火时看到的「弹道偏离」。fi<0（地图外边界）时才退回老猜法。
+           */
+          var refl = fi >= 0;
+          if (refl) {
+            var fc = (fi % world.cols) * TILE, fr2 = Math.floor(fi / world.cols) * TILE;
+            var qx = Math.max(fc, Math.min(nx, fc + TILE));
+            var qy = Math.max(fr2, Math.min(ny, fr2 + TILE));
+            var ex = nx - qx, ey = ny - qy;
+            if (Math.abs(ex) > Math.abs(ey) + 1e-6) b.angle = norm(-b.angle);
+            else if (Math.abs(ey) > Math.abs(ex) + 1e-6) b.angle = norm(Math.PI - b.angle);
+            else if (ex !== 0 || ey !== 0) b.angle = norm(b.angle + Math.PI);
+            else refl = false;              // 圆心已经陷进墙格里：没法判法线，退回老猜法
+          }
+          if (!refl) {
+            if (!okX && !okY) b.angle = norm(b.angle + Math.PI);
+            else if (!okX) b.angle = norm(-b.angle);
+            else b.angle = norm(Math.PI - b.angle);
+          }
           b.bounce++;
           world.events.push({ k: 'ricochet', x: b.x, y: b.y });
           break;    // 本帧在此处结束（下一帧沿新方向继续）
@@ -880,6 +970,9 @@
       // 命数必须有上限：以前可以无限叠加，连捡几个就"怎么打都打不完"，看起来像开了无敌
       if (tank.lives >= MAX_LIVES) full = true;
       else tank.lives = Math.min(MAX_LIVES, tank.lives + 1);
+    } else if (type === 'power') {
+      // 穿甲弹：发数制，最多 AP_ROUNDS 发（再捡一个只是补满，不会越攒越多）
+      tank.power.power = Math.min(AP_ROUNDS, (tank.power.power | 0) + AP_ROUNDS);
     } else {
       tank.power[type] = Math.max(tank.power[type] || 0, DURATION[type]);
     }
@@ -1065,7 +1158,8 @@
       }
       if (t.cooldown > 0) t.cooldown = Math.max(0, t.cooldown - dt);
       if (t.invuln > 0) t.invuln = Math.max(0, t.invuln - dt);
-      for (k in t.power) if (t.power[k] > 0) t.power[k] = Math.max(0, t.power[k] - dt);
+      // 注意：power（穿甲弹）存的是"还剩几发"，不是秒数，不能按帧递减
+      for (k in t.power) if (k !== 'power' && t.power[k] > 0) t.power[k] = Math.max(0, t.power[k] - dt);
       if (t.bot) botThink(world, t, dt);
       if (t.input.fire) fire(world, t);
       moveTank(world, t, dt);
@@ -1105,7 +1199,9 @@
         t.lives, Math.round(t.invuln * 10) / 10, t.kills, t.deaths,
         // 技能剩余时间必须发真实秒数：以前发的是 0/1，客户端只能显示成恒定的"1s"
         Math.round(t.power.speed * 10) / 10, Math.round(t.power.rapid * 10) / 10,
-        Math.round(t.power.triple * 10) / 10, Math.round(t.power.power * 10) / 10,
+        Math.round(t.power.triple * 10) / 10,
+        // 穿甲弹这一位发的是"还剩几发"（0~AP_ROUNDS），不是秒数
+        (t.power.power | 0),
         Math.round(t.power.shield * 10) / 10,
         Math.round((t.power.laser || 0) * 10) / 10, Math.round((t.power.stealth || 0) * 10) / 10]);
     }
@@ -1134,7 +1230,7 @@
     pickPowerupType: pickPowerupType, POWERUP_GAP: POWERUP_GAP, POWERUP_JITTER: POWERUP_JITTER,
     LASER_RANGE: LASER_RANGE, LASER_CD: LASER_CD, LASER_HALF_W: LASER_HALF_W,
     LIVES_DEFAULT: LIVES_DEFAULT, MAX_LIVES: MAX_LIVES,
-    DURATION: DURATION, POWERUP_TTL: POWERUP_TTL,
+    DURATION: DURATION, POWERUP_TTL: POWERUP_TTL, AP_ROUNDS: AP_ROUNDS,
     TANK_COLORS: TANK_COLORS, TANK_COLOR_NAMES: TANK_COLOR_NAMES,
     TANK_STYLES: TANK_STYLES, TANK_STYLE_NAMES: TANK_STYLE_NAMES,
     STEEL_RATIO: STEEL_RATIO, MIN_SPAWN_DIST: MIN_SPAWN_DIST,

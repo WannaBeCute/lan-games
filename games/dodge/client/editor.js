@@ -236,7 +236,8 @@
       if (to) return { x: to.x, y: to.y };
     }
     if (o.orbit) {
-      var cen = DC.gridCenter(o.path[0].col, o.path[0].row);
+      // 圆心必须走 orbitCenter：cell = 格心，cross = 网格十字交点（以前写死格心，十字对齐时画错位置）
+      var cen = DC.orbitCenter(o);
       var a = (o.orbit.angle || 0);
       return { x: cen.x + o.orbit.radius * Math.cos(a), y: cen.y + o.orbit.radius * Math.sin(a) };
     }
@@ -288,7 +289,7 @@
         ctx.setLineDash([7, 6]);
         ctx.beginPath(); ctx.arc(cen.x, cen.y, o.orbit.radius, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
-        // 圆心 + 半径线（圆心只是轨迹锚点，不占格子；初始位置固定在圆心正右方）
+        // 圆心 + 半径线（圆心只是轨迹锚点，不占格子；初始位置由「初始角度」决定，默认 0° = 正右方）
         ctx.fillStyle = 'rgba(100,116,139,.95)';
         ctx.beginPath(); ctx.arc(cen.x, cen.y, 3.5, 0, Math.PI * 2); ctx.fill();
         var cur = obstacleRenderPos(o);
@@ -297,11 +298,13 @@
         ctx.setLineDash([3, 3]);
         ctx.beginPath(); ctx.moveTo(cen.x, cen.y); ctx.lineTo(cur.x, cur.y); ctx.stroke();
         ctx.restore();
-        // 初始位置标记（angle=0 的落点，就在圆心正右方）
+        // 初始位置标记（「初始角度」的落点；预览/回放时障碍会跑走，这个标记始终钉在出发点上）
+        var ia = o.orbit.angle || 0;
+        var deg = ((Math.round(ia * 180 / Math.PI) % 360) + 360) % 360;
         ctx.strokeStyle = 'rgba(239,68,68,.8)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 3]);
-        ctx.beginPath(); ctx.arc(cen.x + o.orbit.radius, cen.y, 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cen.x + o.orbit.radius * Math.cos(ia), cen.y + o.orbit.radius * Math.sin(ia), 6, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         // 转向箭头（顺时针 / 逆时针）
         arrow(ctx, cur.x, cur.y, Math.atan2(cur.y - cen.y, cur.x - cen.x) + (o.orbit.cw ? Math.PI / 2 : -Math.PI / 2),
@@ -310,6 +313,7 @@
         ctx.font = '10px "Microsoft YaHei", sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('半径 ' + o.orbit.radius + 'px · ' + (o.orbit.cw ? '顺时针' : '逆时针') +
+          (deg ? ' · 初始 ' + deg + '°' : '') +
           (o.centerSnap === 'cross' ? ' · 圆心在网格交点' : ''), cen.x, cen.y - o.orbit.radius - 8);
       } else {
         if (o.path.length > 1) {
@@ -365,6 +369,32 @@
         ctx.beginPath(); ctx.arc(pos.x, pos.y, DC.OBSTACLE_RADIUS + 7, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
       }
+    });
+
+    // 重叠摆放提示：圆本体 / 圆心锚点可以叠在同一处，叠了就标出层数（点击会弹出层选菜单）
+    var spots = [];
+    lv.obstacles.forEach(function (o) {
+      var pos2 = obstacleRenderPos(o);
+      spots.push({ x: pos2.x, y: pos2.y });
+      if (o.orbit) { var cen3 = DC.orbitCenter(o); spots.push({ x: cen3.x, y: cen3.y }); }
+    });
+    var merged = [];
+    spots.forEach(function (s) {
+      for (var mi = 0; mi < merged.length; mi++) {
+        if (Math.abs(merged[mi].x - s.x) < 12 && Math.abs(merged[mi].y - s.y) < 12) { merged[mi].n++; return; }
+      }
+      merged.push({ x: s.x, y: s.y, n: 1 });
+    });
+    merged.forEach(function (m) {
+      if (m.n < 2) return;
+      ctx.save();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath(); ctx.arc(m.x + 12, m.y - 12, 8.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('×' + m.n, m.x + 12, m.y - 11.5);
+      ctx.restore();
     });
 
     // 测试游玩：把控制的小方块画上去（死了半透明、无敌期闪烁、到了画对勾）
@@ -542,6 +572,24 @@
     }
     return null;
   }
+  /**
+   * 这个点上所有「可点的障碍部位」，数组顺序 = 障碍摆放顺序（越靠后画的越在上面）。
+   * 同一个障碍只留一条：圆本体优先于锚点（圆心锚点/起始点）。
+   * 返回 [{o, part}]，part ∈ 'body'（圆本体）| 'anchor'（圆心锚点或起始点格）。
+   */
+  function obstacleHitsAt(p) {
+    var out = [];
+    E.level.obstacles.forEach(function (o) {
+      var pos = obstacleRenderPos(o);
+      var dx = p.x - pos.x, dy = p.y - pos.y;
+      var rr = DC.OBSTACLE_RADIUS + 4;
+      if (dx * dx + dy * dy <= rr * rr) { out.push({ o: o, part: 'body' }); return; }
+      var s = o.path[0];
+      if (s && s.col === p.col && s.row === p.row) out.push({ o: o, part: 'anchor' });
+    });
+    return out;
+  }
+
   function unitsAtPoint(p) {
     var obstacle = obstacleStartAt(p.col, p.row) || obstacleAtPixel(p.x, p.y);
     if (obstacle) return { units: [{ kind: 'obstacle', id: obstacle.id }], obstacle: obstacle };
@@ -549,6 +597,58 @@
     if (fac) return { units: unitsOfRegion(fac.kind, fac.cells) };
     if (cellIndex(E.level.walls, p.col, p.row) >= 0) return { units: [{ kind: 'wall', col: p.col, row: p.row }] };
     return { units: [] };
+  }
+
+  /* ---------- 层选菜单：一个点叠了多个障碍部位时，先问控制哪一层 ---------- */
+  var layerMenu = null;
+  function closeLayerMenu() {
+    if (layerMenu && layerMenu.parentNode) layerMenu.parentNode.removeChild(layerMenu);
+    layerMenu = null;
+  }
+  /**
+   * hits 长度 ≥2 时弹出小菜单；选哪层就回调哪层。
+   * 菜单挂在画布容器里（.ed-canvas-wrap 是 relative），位置跟鼠标走。
+   */
+  function openLayerMenu(hits, ev, done) {
+    closeLayerMenu();
+    var wrap = $('edCv').parentNode;
+    var menu = document.createElement('div');
+    menu.className = 'layer-menu';
+    var title = document.createElement('div');
+    title.className = 'lm-title';
+    title.textContent = '这里叠了 ' + hits.length + ' 层，控制哪一个？';
+    menu.appendChild(title);
+    hits.forEach(function (hit, i) {
+      var b = document.createElement('button');
+      b.className = 'lm-item';
+      var partLabel = hit.part === 'body' ? '圆本体' : (hit.o.orbit ? '圆心锚点' : '起始点');
+      b.textContent = (i + 1) + ' 层：' + hit.o.id + '（' + partLabel + '）';
+      b.onclick = function () { closeLayerMenu(); done(hit); };
+      menu.appendChild(b);
+    });
+    var rect = wrap.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(ev.clientX - rect.left + 8, rect.width - 190)) + 'px';
+    menu.style.top = Math.max(4, ev.clientY - rect.top + 8) + 'px';
+    wrap.appendChild(menu);
+    layerMenu = menu;
+    setStatus('这个位置叠了 ' + hits.length + ' 层：点选一层再操作');
+    setTimeout(function () {
+      window.addEventListener('mousedown', function h(e2) {
+        if (layerMenu && !layerMenu.contains(e2.target)) closeLayerMenu();
+        window.removeEventListener('mousedown', h);
+      });
+    }, 0);
+  }
+  /**
+   * 点选通用入口：障碍部位唯一 → 直接回调；叠了多层 → 弹层选菜单；没有障碍 → 走墙/设施点选。
+   * done(hit) 的 hit：{o, part}（障碍）或 {units}（墙/设施/空）。
+   */
+  function pickAtPoint(p, ev, done) {
+    var hits = obstacleHitsAt(p);
+    if (hits.length > 1) { openLayerMenu(hits, ev, done); return; }
+    if (hits.length === 1) { done(hits[0]); return; }
+    var hit = unitsAtPoint(p);
+    done({ units: hit.units, o: hit.obstacle || null, part: hit.obstacle ? 'body' : null });
   }
   function unitsInBand(band) {
     var x0 = Math.min(band.x0, band.x1), x1 = Math.max(band.x0, band.x1);
@@ -683,20 +783,31 @@
       return;
     }
 
-    // 点起始点（或圆本体）= 选中障碍；按住不动再拖 = 整体搬家
-    var exist = obstacleStartAt(p.col, p.row) || obstacleAtPixel(p.x, p.y);
-    if (exist) {
-      E.selected = exist;
-      E.pathEdit = false;
-      E.pathStay = false;
-      E.sel = [{ kind: 'obstacle', id: exist.id }];
-      E.drag = {
-        mode: 'obMove', obstacle: exist,
-        startCol: p.col, startRow: p.row, moved: false,
-        origin: exist.path.map(function (pt) { return { col: pt.col, row: pt.row }; })
+    // 点障碍 = 选中；按住拖动：圆周障碍的圆本体 = 调初始角度，锚点 / 起始点 = 整体搬家。
+    // 一个点叠了多层时先弹层选菜单，选哪层控制哪层。
+    var hits = obstacleHitsAt(p);
+    if (hits.length) {
+      var begin = function (hit) {
+        var exist = hit.o;
+        E.selected = exist;
+        E.pathEdit = false;
+        E.pathStay = false;
+        E.sel = [{ kind: 'obstacle', id: exist.id }];
+        if (hit.part === 'body' && exist.orbit) {
+          E.drag = { mode: 'obAngle', obstacle: exist, moved: false };
+          setStatus('拖动调整「' + exist.id + '」的初始角度（松手收整到整度数；也可以在右侧属性里直接输入）');
+        } else {
+          E.drag = {
+            mode: 'obMove', obstacle: exist,
+            startCol: p.col, startRow: p.row, moved: false,
+            origin: exist.path.map(function (pt) { return { col: pt.col, row: pt.row }; })
+          };
+        }
+        WB.audio.play('click');
+        refresh();
       };
-      WB.audio.play('click');
-      refresh();
+      if (hits.length > 1) openLayerMenu(hits, ev, begin);
+      else begin(hits[0]);
       return;
     }
 
@@ -748,6 +859,16 @@
     draw();
   }
 
+  /** 按住圆周障碍的圆本体拖动：改「初始角度」（指针相对圆心的方向就是初始点的方向） */
+  function angleObstacleDrag(p) {
+    var d = E.drag, o = d.obstacle;
+    var cen = DC.orbitCenter(o);
+    var a = Math.atan2(p.y - cen.y, p.x - cen.x);
+    if (!d.moved) { pushHistory(); d.moved = true; }
+    o.orbit.angle = a;
+    draw();
+  }
+
   function onMove(ev) {
     if (!E.level) return;
     var p = pointerCells(ev);
@@ -760,6 +881,7 @@
       }
       if (E.drag.mode === 'paint') { paintWall(p, E.drag.paint); return; }
       if (E.drag.mode === 'obMove') { moveObstacleDrag(p); return; }
+      if (E.drag.mode === 'obAngle') { angleObstacleDrag(p); return; }
       if (E.drag.mode === 'rect') {
         var q = clampInto(p);
         if (q.col !== E.drag.x0 || q.row !== E.drag.y0) E.drag.moved = true;
@@ -793,11 +915,15 @@
       } else {
         var p = pointerCells(ev);
         if (inBounds(p)) {
-          var hit = unitsAtPoint(p);
-          E.sel = hit.units;
-          syncSelectedObstacle();
-          E.pathEdit = false;
-          setStatus(hit.units.length ? '选中了 1 项（右键删除；Ctrl+Z 撤回）' : '（这里没东西）');
+          // 叠层的位置会弹层选菜单（异步回调），选哪层选中哪层
+          pickAtPoint(p, ev, function (hit) {
+            E.sel = hit.units || [{ kind: 'obstacle', id: hit.o.id }];
+            syncSelectedObstacle();
+            E.pathEdit = false;
+            setStatus(E.sel.length ? '选中了 1 项（右键删除；Ctrl+Z 撤回）' : '（这里没东西）');
+            refresh();
+          });
+          return;
         }
       }
       refresh();
@@ -810,6 +936,17 @@
       if (moved) {
         refresh();
         setStatus('已把「' + o.id + '」整体搬到 (' + o.path[0].col + ', ' + o.path[0].row + ')，路径跟着一起平移（Ctrl+Z 可撤回）');
+      }
+      return;
+    }
+    if (d.mode === 'obAngle') {
+      if (d.moved) {
+        // 松手收整到整度数：存档干净，和游戏里看到的完全一致
+        var oa = d.obstacle;
+        var deg2 = ((Math.round((oa.orbit.angle || 0) * 180 / Math.PI) % 360) + 360) % 360;
+        oa.orbit.angle = deg2 * Math.PI / 180;
+        refresh();
+        setStatus('已把「' + oa.id + '」的初始角度调到 ' + deg2 + '°（Ctrl+Z 可撤回）');
       }
       return;
     }
@@ -853,13 +990,16 @@
     if (E.sel.length) { pushHistory(); deleteSelection(); return; }
     var p = pointerCells(ev);
     if (!inBounds(p)) return;
-    var hit = unitsAtPoint(p);
-    if (!hit.units.length) return;
-    pushHistory();
-    deleteUnits(hit.units);
-    WB.audio.play('error');
-    setStatus('删掉了这里的东西（Ctrl+Z 可以撤回）');
-    refresh();
+    // 叠层的位置先问删哪一层，别把叠在一起的全带走
+    pickAtPoint(p, ev, function (hit) {
+      var units = hit.units || [{ kind: 'obstacle', id: hit.o.id }];
+      if (!units.length) return;
+      pushHistory();
+      deleteUnits(units);
+      WB.audio.play('error');
+      setStatus('删掉了这里的东西（Ctrl+Z 可以撤回）');
+      refresh();
+    });
   }
 
   /* ================= 面板刷新 ================= */
@@ -1031,7 +1171,7 @@
         o.centerSnap = o.centerSnap || 'cell';
         E.pathEdit = false;
         E.pathStay = false;
-        WB.ui.toast('已改成圆周旋转：初始位置固定在圆心正右方，点圆本体可选中、按住可拖动', 'ok');
+        WB.ui.toast('已改成圆周旋转：初始位置默认在圆心正右方，按住圆本体拖动可以调初始角度', 'ok');
       } else {
         delete o.orbit;
       }
@@ -1104,12 +1244,38 @@
       row('旋转方向', dir);
       dir.onchange = function () { pushHistory(); o.orbit.cw = dir.value === 'cw'; draw(); };
 
+      // 初始角度：障碍出生时在圆周上的位置（0° = 圆心正右方，90° = 正下方）。
+      // 也可以直接在画布上按住圆本体拖着转，松手自动收整到整度数。
+      var degOf = function () { return ((Math.round((o.orbit.angle || 0) * 180 / Math.PI) % 360) + 360) % 360; };
+      var ang = document.createElement('input');
+      ang.type = 'range';
+      ang.min = '0'; ang.max = '359'; ang.step = '1';
+      ang.value = String(degOf());
+      var angRow = row('初始角度', ang);
+      var angVal = document.createElement('span');
+      angVal.className = 'val';
+      angVal.textContent = degOf() + '°';
+      angRow.appendChild(angVal);
+      editableVal(angVal, {
+        min: 0, max: 359, step: 1,
+        get: degOf,
+        set: function (v) { o.orbit.angle = v * Math.PI / 180; }
+      });
+      var angPushed = false;
+      ang.oninput = function () {
+        if (!angPushed) { pushHistory(); angPushed = true; }
+        o.orbit.angle = parseInt(ang.value, 10) * Math.PI / 180;
+        angVal.textContent = ang.value + '°';
+        draw();
+      };
+
       // 圆的半径是内核固定值（DC.OBSTACLE_RADIUS），这里刻意不给滑块：
       // 半径一变，缝隙、判定、可通关性全都跟着变，编辑器里调它只会存出"看着能过、其实过不去"的关卡。
       var hintO = document.createElement('p');
       hintO.className = 'dim small';
-      hintO.textContent = '圆心只是轨迹锚点，不占格子：可以放在出生点 / 复活点 / 终点或任何地方（选中后按住圆本体拖动即可搬家）。' +
-        '初始位置固定在圆心正右方，点它就能选中。速度是「圈上的线速度」：半径越小转得越快，转一整圈用时 = 2π×半径 ÷ 速度。';
+      hintO.textContent = '圆心只是轨迹锚点，不占格子：可以放在出生点 / 复活点 / 终点或任何地方（选中锚点按住拖动即可搬家）。' +
+        '初始位置由「初始角度」决定（默认 0° = 圆心正右方）：按住圆本体拖着转就能直接调，松手收整到整度数。' +
+        '速度是「圈上的线速度」：半径越小转得越快，转一整圈用时 = 2π×半径 ÷ 速度。';
       box.appendChild(hintO);
     } else {
       var loop = document.createElement('select');
@@ -1577,8 +1743,8 @@
     var cols0 = function () {
       var c = parseInt($('inCols').value, 10), r = parseInt($('inRows').value, 10);
       return [
-        Math.max(DC.MIN_COLS, Math.min(DC.MAX_COLS, c || 20)),
-        Math.max(DC.MIN_ROWS, Math.min(DC.MAX_ROWS, r || 15))
+        Math.max(DC.MIN_COLS, Math.min(DC.MAX_COLS, c || 32)),
+        Math.max(DC.MIN_ROWS, Math.min(DC.MAX_ROWS, r || 18))
       ];
     };
     function doRebuild() {
@@ -1610,6 +1776,7 @@
       if (!b) return;
       E.tool = b.dataset.tool;
       E.sel = [];
+      closeLayerMenu();
       if (E.tool !== 'obstacle') { E.pathEdit = false; E.pathStay = false; E.selected = null; }
       syncToolButtons();
       refresh();
@@ -1626,9 +1793,9 @@
       E.hover = { col: -1, row: -1 };
       draw();
     });
-    // 拖拽途中鼠标划出画布也不断（砌墙 / 画区域 / 框选都要接着走）
+    // 拖拽途中鼠标划出画布也不断（砌墙 / 画区域 / 框选 / 拖障碍都要接着走）
     window.addEventListener('mousemove', function (e) {
-      if (E.drag && (E.drag.mode === 'paint' || E.drag.mode === 'rect' || E.drag.mode === 'band' || E.drag.mode === 'obMove')) onMove(e);
+      if (E.drag && (E.drag.mode === 'paint' || E.drag.mode === 'rect' || E.drag.mode === 'band' || E.drag.mode === 'obMove' || E.drag.mode === 'obAngle')) onMove(e);
     });
     window.addEventListener('mouseup', onUp);
 
@@ -1786,6 +1953,7 @@
       if (e.key === 'Escape') {
         closeLibrary();
         closeLeave();
+        closeLayerMenu();
         $('helpMask').classList.add('hidden');
         if (E.test) { stopTest(); }
         else {
@@ -1860,14 +2028,14 @@
     bind();
     bootPlatformChat();
     syncToolButtons();
-    // 默认给一个示例关卡，省得用户先点"重建"才能看到东西
-    E.level = blankLevel(20, 15);
+    // 默认给一个 16:9 的示例关卡，省得用户先点"重建"才能看到东西
+    E.level = blankLevel(32, 18);
     // 出生点故意画成 2×2 的区域，顺便演示"区域"这个概念
-    E.level.spawns = [{ col: 1, row: 6 }, { col: 2, row: 6 }, { col: 1, row: 7 }, { col: 2, row: 7 }];
-    E.level.checkpoints = [{ col: 5, row: 7 }, { col: 6, row: 7 }];
-    E.level.goals = [{ col: 18, row: 7 }];
-    var o = newObstacle(10, 3);
-    o.path = [{ col: 10, row: 3 }, { col: 10, row: 11 }];
+    E.level.spawns = [{ col: 1, row: 8 }, { col: 2, row: 8 }, { col: 1, row: 9 }, { col: 2, row: 9 }];
+    E.level.checkpoints = [{ col: 6, row: 9 }, { col: 7, row: 9 }];
+    E.level.goals = [{ col: 30, row: 9 }];
+    var o = newObstacle(16, 4);
+    o.path = [{ col: 16, row: 4 }, { col: 16, row: 13 }];
     E.level.obstacles = [o];
     $('edEmpty').classList.add('hidden');
     syncSizeInputs();

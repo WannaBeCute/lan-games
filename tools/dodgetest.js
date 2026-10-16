@@ -448,10 +448,10 @@ function validateTests() {
     obstacles: [{ id: 'x', path: [{ col: 1, row: 7 }], speed: 100, loopMode: 'pingpong', radius: 18 }]
   });
   const vOb = DC.validateLevel(obOnSpawn);
-  ok('障碍轨迹压在出生点上 → 警告（安全区兜底，不拦保存）',
-    vOb.ok === true && /不会被撞死/.test(vOb.warnings.join('')), vOb.warnings.join('；'));
+  ok('障碍轨迹压在出生点上 → 警告（出生点不保命，不拦保存）',
+    vOb.ok === true && /不是安全区/.test(vOb.warnings.join('')), vOb.warnings.join('；'));
 
-  // 底层保障：玩家站在出生/复活/终点安全区内（含边界线）永不因障碍死亡
+  // 新规则：出生点/复活点不是安全区，站在里面被障碍扫到照样死亡（只有终点区免死）
   const safeLv = DC.normalizeLevel({
     cols: 10, rows: 7, spawns: [{ col: 2, row: 3 }], goals: [{ col: 8, row: 3 }],
     walls: DC.createLevel(10, 7).walls,
@@ -465,13 +465,13 @@ function validateTests() {
     DC.stepObstacles(safeWorld, 1 / 60);
     if (DC.stepPlayer(safeWorld, safeP, {}, 1 / 60).died) { safeDied = true; break; }
   }
-  ok('玩家站在出生区内（障碍路径正好经过）→ 不死', safeDied === false,
+  ok('玩家站在出生区内（障碍路径正好经过）→ 照样死亡', safeDied === true,
     'deaths=' + safeP.deaths);
-  ok('inSafeZone：站区内 true，离开一步 false',
-    DC.inSafeZone(safeLv, DC.gridCenter(2, 3).x, DC.gridCenter(2, 3).y) === true &&
-    DC.inSafeZone(safeLv, DC.gridCenter(4, 3).x, DC.gridCenter(4, 3).y) === false);
-  ok('求解器与游戏同一套安全区（出生点被障碍压着也能通关）',
-    DC.solveReachable(safeLv, 20).ok === true);
+  ok('inSafeZone：终点区内 true，出生点/空地 false',
+    DC.inSafeZone(safeLv, DC.gridCenter(8, 3).x, DC.gridCenter(8, 3).y) === true &&
+    DC.inSafeZone(safeLv, DC.gridCenter(2, 3).x, DC.gridCenter(2, 3).y) === false);
+  ok('求解器与游戏同一套判定（出生点被障碍压着 → 过不去）',
+    DC.solveReachable(safeLv, 20).ok === false);
 
   const norm = DC.normalizeLevel({ cols: 8, rows: 6, spawns: [{ col: 1, row: 1 }], walls: [{ col: 1, row: 1 }, { col: 99, row: 99 }] });
   ok('规格化会剔除越界格', norm.walls.length === 1, '墙 ' + norm.walls.length + ' 个');
@@ -599,7 +599,7 @@ async function onlineTests() {
   const a = await client('A', port);
   const b = await client('B', port);
   await a.wait('hello'); await b.wait('hello');
-  a.send({ t: 'dodge.create' });
+  a.send({ t: 'dodge.create', key: 'keyA' });
   const created = await a.wait('dodge.created');
   const code = created.code;
   ok('房主建房成功（4 位房间号）', /^\d{4}$/.test(code), code);
@@ -609,7 +609,7 @@ async function onlineTests() {
   ok('大厅带上了关卡列表', (room1.levelNames || []).length === 10);
 
   /* 加入 */
-  b.send({ t: 'dodge.join', code: code });
+  b.send({ t: 'dodge.join', code: code, key: 'keyB' });
   await b.wait('dodge.joined');
   const youB = await b.wait('dodge.you');
   ok('第二个玩家拿到自己的序号与颜色', youB.index === 1 && !!youB.color, JSON.stringify(youB));
@@ -738,15 +738,35 @@ async function onlineTests() {
   await b.wait('dodge.toLobby', 4000);
   ok('可以回到大厅', true);
 
-  /* 退出 / 回收 */
+  /* 掉线（刷新/断网）：给宽限期，别当场把人踢掉、也别把房间弄丢 */
   b.close();
+  const dropMsg = await a.wait('dodge.dropped', 4000);
+  ok('队友掉线会通知其他人（不是直接踢出房间）', !!dropMsg.name, dropMsg.name);
+  const stDrop = await (await fetch(base + '/api/status')).json();
+  ok('掉线后房间仍在 → 刚发的房间号继续有效', stDrop.dodgeRooms === 1, 'dodgeRooms=' + stDrop.dodgeRooms);
+
+  /* 带着同一把钥匙回来（相当于刷新页面）→ 座位还在 */
+  const b2 = await client('B2', port);
+  await b2.wait('hello');
+  b2.send({ t: 'dodge.resume', key: 'keyB' });
+  const back = await b2.wait('dodge.joined', 4000);
+  ok('刷新/重连后能回到原房间', back.code === code && back.resumed === true, JSON.stringify(back));
+  await b2.wait('dodge.you');
+  const roomBack = await b2.wait('dodge.room', 4000);
+  ok('座位没丢（人数仍是 2）', roomBack.members.length === 2, roomBack.members.length + ' 人');
+
+  /* 主动离开（非房主）→ 队友收到通知，房间还在 */
+  b2.send({ t: 'dodge.leave' });
   const leftMsg = await a.wait('dodge.playerLeft', 4000);
-  ok('有人离开会通知队友', !!leftMsg.name, leftMsg.name);
+  ok('主动离开会通知队友', !!leftMsg.name, leftMsg.name);
+
+  /* 房主离开 → 房间当场回收 */
   a.send({ t: 'dodge.leave' });
   await sleep(400);
   const st2 = await (await fetch(base + '/api/status')).json();
-  ok('人走光了房间被回收', st2.dodgeRooms === 0, 'dodgeRooms=' + st2.dodgeRooms);
+  ok('房主离开后房间立刻回收', st2.dodgeRooms === 0, 'dodgeRooms=' + st2.dodgeRooms);
 
+  b2.close();
   a.close();
   await sleep(150);
   if (PROC) PROC.kill();

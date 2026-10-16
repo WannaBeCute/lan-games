@@ -207,6 +207,8 @@ body.gomoku-theme .stage { position: relative; z-index: 1; }
 .gomoku-theme .pl .uni { color: rgba(255, 255, 255, .62); }
 .gomoku-theme .pl.active .uni { color: rgba(51, 32, 12, .72); }
 .gomoku-theme .pl .tag { background: #6f7f4e; border: 1px solid #58653c; color: #f4fbe6; border-radius: 4px; }
+/* 对方掉线（还在宽限期里等他回来）：用暖色提示，别用绿色那种"在线"的观感 */
+.gomoku-theme .pl .tag.drop { background: #8a4a3a; border-color: #6d382b; color: #ffe9dd; }
 .gomoku-theme .pl .stone.b { background: #111; border: 1px solid #000; box-shadow: none; }
 .gomoku-theme .pl .stone.w { background: #f7f3e8; border: 1px solid #b9ac90; box-shadow: none; }
 
@@ -263,4 +265,25 @@ body.gomoku-theme .stage { position: relative; z-index: 1; }
 .gomoku-theme input[type=range] { background: #5a3d21; }
 .gomoku-theme input[type=range]::-webkit-slider-thumb {
   background: #d8ad72; border: 1px solid #8a6132; box-shadow: none;
+}
+
+/* ---------- 与平台「总体 UI 主题」的关系 ----------
+ * 这一页有自己的深色木纹主题，理应由它说了算：
+ * 用户在设置里切到「浅色」时，平台会把 --dim / --text / --ok 换成一整套深色字，
+ * 压在这张深色木桌上就成了"深字压深底"（实测对比度 1.9）；
+ * 顶栏还会被刷成白条（body.wb-light .topbar 比 .gomoku-theme .topbar 更具体），
+ * 上面的米色标题直接看不见。这里把平台变量和顶栏钉回本页自己的配色。
+ */
+body.gomoku-theme {
+  --text: #f6e9d2;
+  --dim: #cbb693;
+  --dim2: #a8916c;
+  --ok: #9fd7a8;
+  --warn: #f0c070;
+  --danger: #ff9aa6;
+  --accent: #9dc0ff;
+}
+body.wb-light.gomoku-theme .topbar {
+  background: linear-gradient(180deg, #6d4a2b, #573a22);
+  border-bottom: 2px solid #3f2a18;
 }

@@ -72,8 +72,11 @@ window.WB = window.WB || {};
       }
       if (msg.t === 'hello') {
         self.id = msg.id; self.inviteCode = msg.inviteCode; self.ip = msg.ip;
+        // 全服公告：hello 里捎带的（中途进场补看）与独立的 notice 广播都交给顶栏公告条
+        if (msg.notice && msg.notice.text && WB.ui) WB.ui.notice(msg.notice.text);
         self.emit('hello', msg);
       }
+      if (msg.t === 'notice' && WB.ui) WB.ui.notice(msg.text);
       self.emit(msg.t, msg);
       self.emit('*', msg);
     };

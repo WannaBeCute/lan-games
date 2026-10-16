@@ -24,6 +24,65 @@ window.WB = window.WB || {};
     $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
   };
 
+  /* ================= 身份钥匙 / 房间记忆（所有游戏通用） =================
+   * 为什么需要「钥匙」：平台每次建立 WebSocket 连接都会分配一个新 id，
+   * 昵称在没设置时还是随机的 —— 所以「刷新一下 / 断网重连一下」在服务端看来
+   * 就是换了个陌生人。结果就是：对局被当成掉线销毁，页面却还停在棋盘/战场上，
+   * 点哪儿都没反应（连接徽标还是绿的、聊天也正常）。
+   *
+   * 解法：在浏览器里存一把稳定的钥匙，游戏每次发消息都带上它；
+   * 服务端据此认出「还是同一个人」，把房间/对局原样还给他。
+   *
+   * 用 sessionStorage（不是 localStorage）：每个标签页一把钥匙、刷新仍在，
+   * 于是"刷新回到房间"成立；而同一台机器开两个标签页就是两个玩家，不会互相抢房主。
+   * 关掉标签页即作废。
+   *
+   * 这一层保持中立：只认「游戏 id」这个字符串，不认识任何具体游戏。
+   */
+  var KEY_SLOT = 'wb.me.key';
+  var ROOM_SLOT = 'wb.me.room.';
+
+  var me = WB.me = {
+    /** 本标签页的稳定身份钥匙（同一个标签页永远返回同一个值） */
+    key() {
+      try {
+        var k = sessionStorage.getItem(KEY_SLOT);
+        if (!k) {
+          k = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+          sessionStorage.setItem(KEY_SLOT, k);
+        }
+        return k;
+      } catch (e) {
+        // 隐私模式等取不到 sessionStorage：退化成「本页生命周期内稳定」的值
+        if (!me._mem) me._mem = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        return me._mem;
+      }
+    },
+
+    /** 记住「我正在某个游戏的某个房间里」，刷新后用来回到原处 */
+    rememberRoom(game, code) {
+      if (!game || !code) return;
+      try { sessionStorage.setItem(ROOM_SLOT + game, JSON.stringify({ code: String(code), ts: Date.now() })); } catch (e) { /* noop */ }
+    },
+
+    /** 取出上次记的房间号；超过 maxAge（默认 30 分钟）视为过期 */
+    recallRoom(game, maxAge) {
+      try {
+        var raw = sessionStorage.getItem(ROOM_SLOT + game);
+        if (!raw) return '';
+        var o = JSON.parse(raw);
+        if (!o || !o.code) return '';
+        if (maxAge && Date.now() - (o.ts || 0) > maxAge) { me.forgetRoom(game); return ''; }
+        return String(o.code);
+      } catch (e) { return ''; }
+    },
+
+    /** 明确离开房间时清掉记忆，别让下次进来又自动回房 */
+    forgetRoom(game) {
+      try { sessionStorage.removeItem(ROOM_SLOT + game); } catch (e) { /* noop */ }
+    }
+  };
+
   /* ================= 键位 ================= */
   var KEYNAMES = {
     Space: '空格', Enter: '回车', Escape: 'Esc', Tab: 'Tab', Backspace: '退格',
@@ -326,6 +385,44 @@ window.WB = window.WB || {};
     box.appendChild(t);
     setTimeout(function () { t.classList.add('out'); }, 2400);
     setTimeout(function () { t.remove(); }, 2900);
+  };
+
+  /* ================= 全服公告条 =================
+   * 挂在顶栏（.topbar）正中间：内容长会横向滚动；常驻显示，不会自动消失（只能手动关掉）。
+   * 由 net.js 在收到服务端的 notice / hello（带公告）时调用，各页面不用单独接线。
+   */
+  ui.notice = function (text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    var bar = document.getElementById('wb-notice');
+    if (!bar) {
+      var topbar = document.querySelector('.topbar');
+      if (!topbar) return;                     // 没有顶栏的页面就不挂（目前所有页面都有）
+      bar = util.el('div', 'wb-notice');
+      bar.id = 'wb-notice';
+      bar.innerHTML = '<span class="wb-notice-ico">📢</span>' +
+        '<span class="wb-notice-view"><span class="wb-notice-text"></span></span>' +
+        '<button type="button" class="wb-notice-x" title="关闭公告">×</button>';
+      bar.querySelector('.wb-notice-x').onclick = function () { audio.play('click'); ui.notice.hide(); };
+      topbar.appendChild(bar);
+    }
+    var view = bar.querySelector('.wb-notice-view');
+    var txt = bar.querySelector('.wb-notice-text');
+    txt.classList.remove('scroll');
+    txt.style.animationDuration = '';
+    txt.textContent = text;                    // 公告来自控制台输入，一律当纯文本
+    bar.classList.remove('hide');
+    /* 内容比可视窗长才滚动：时长随字数走，长短公告的滚动速度差不多 */
+    requestAnimationFrame(function () {
+      if (txt.scrollWidth - view.clientWidth > 4) {
+        txt.classList.add('scroll');
+        txt.style.animationDuration = Math.max(6, text.length * 0.32) + 's';
+      }
+    });
+  };
+  ui.notice.hide = function () {
+    var bar = document.getElementById('wb-notice');
+    if (bar) bar.classList.add('hide');
   };
 
   /** 设置弹窗：音效音量 + 键位设置 + 昵称 */

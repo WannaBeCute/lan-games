@@ -22,6 +22,7 @@
     last: null,
     undoLeft: { 1: 1, 2: 1 },
     canUndo: { 1: false, 2: false },
+    dropped: { 1: false, 2: false },   // 谁掉线了（宽限期里服务端不会结束对局）
     aiLevel: 1,
     thinking: false,
     aiTimer: 0,
@@ -392,10 +393,25 @@
   var NET = null;
   /** 好友组队邀请直达：从 /gomoku/?invite=... 打开时，拿到自己的邀请码后自动向对方发起对局 */
   var PENDING_FRIEND_INVITE = null;
-  function SEND(o) { if (NET) NET.send(o); }
+  /*
+   * 本标签页的稳定身份钥匙（平台层 WB.me 提供）。
+   * 平台每次连接都会分配新的 id、昵称没设置时还是随机的 —— 于是「刷新一下、
+   * 断网重连一下」在服务端看来就是换了个陌生人：对局被当成掉线销毁，页面却还停在
+   * 棋盘上，点哪儿都没反应（连接徽标还是绿的、聊天也正常）。每条消息都带上这把钥匙，
+   * 服务端就能认出「还是同一个人」，把对局原样还回来。
+   */
+  var ME_KEY = WB.me.key();
+  function SEND(o) {
+    if (!NET) return;
+    NET.send(Object.assign({ key: ME_KEY }, o));
+  }
 
   function onHello() {
-    SEND({ t: 'gomoku.register' });
+    // 重连时连「我还以为自己在哪一局」一起报上去：服务端认不回来就如实告诉页面，别让它装死
+    SEND({
+      t: 'gomoku.register',
+      matchId: (G.mode === 'online' && G.matchId && !G.over) ? G.matchId : null
+    });
   }
 
   function onCode(m) {
@@ -432,6 +448,7 @@
     G.turn = m.turn;
     G.undoLeft = { 1: m.undoLeft[1], 2: m.undoLeft[2] };
     G.canUndo = { 1: !!(m.canUndo && m.canUndo[1]), 2: !!(m.canUndo && m.canUndo[2]) };
+    G.dropped = { 1: !!(m.dropped && m.dropped[1]), 2: !!(m.dropped && m.dropped[2]) };
     G.players = m.players;
     G.last = m.last;
     G.win = m.win;
@@ -524,7 +541,9 @@
       line.textContent = isMyTurn() ? '轮到你落子' : (G.thinking ? '电脑思考中…' : '电脑回合');
     } else if (G.mode === 'online') {
       var mine = G.turn === G.myColor;
-      if (mine) line.textContent = '轮到你落子';
+      var oppColor = G.myColor === 1 ? 2 : 1;
+      if (G.dropped[oppColor]) line.textContent = '对方掉线了，正在等他回来…';
+      else if (mine) line.textContent = '轮到你落子';
       else if (G.rx >= 0 && G.ry >= 0) line.textContent = '对方正在选择落子位置…';
       else line.textContent = '等待对方落子…';
       // 对方还没应手 → 现在正是悔棋的时机
@@ -552,10 +571,12 @@
 
   function plHtml(color, name, active) {
     var me = G.mode === 'online' && color === G.myColor;
+    var off = G.mode === 'online' && G.dropped && G.dropped[color];
     return '<div class="pl' + (active ? ' active' : '') + '">' +
       '<span class="stone ' + (color === 1 ? 'b' : 'w') + '"></span>' +
       '<span class="nm">' + esc(name) + '</span>' +
-      (me ? '<span class="tag">我</span>' : '<span class="uni">' + (color === 1 ? '先手' : '后手') + '</span>') +
+      (off ? '<span class="tag drop">掉线中</span>'
+           : (me ? '<span class="tag">我</span>' : '<span class="uni">' + (color === 1 ? '先手' : '后手') + '</span>')) +
       '</div>';
   }
 
@@ -696,6 +717,29 @@
     });
     NET.on('gomoku.start', function (m) { applyState(m); WB.ui.toast('对局开始，你执' + (m.you === 1 ? '黑' : '白') + '棋', 'ok'); });
     NET.on('gomoku.state', function (m) { applyState(m); });
+    /*
+     * 带着同一把钥匙回到服务端（刷新页面 / 断线重连 / 网络抖了一下）：
+     * 对局被原样还了回来，不用重新邀请，接着下就行。
+     */
+    NET.on('gomoku.reattached', function (m) {
+      WB.ui.toast('已重新连上，对局已恢复', 'ok');
+    });
+    /*
+     * 服务端说这一局已经没了（宽限期过了、对手走了…）：
+     * 老老实实回菜单，不要在死棋盘上继续装作能下棋。
+     */
+    NET.on('gomoku.gone', function (m) {
+      WB.ui.toast((m && m.msg) || '这一局已经结束了', 'err');
+      WB.audio.play('error');
+      G.over = true;          // 先置位：toMenu 里就不会再补发一条 leave
+      toMenu();
+    });
+    /* 对手掉线：他还有宽限期，先提示，别急着结束对局 */
+    NET.on('gomoku.drop', function (m) {
+      WB.ui.toast((m && m.name ? m.name : '对方') + '掉线了，正在等他回来…', 'err');
+      WB.audio.play('error');
+      updatePanel();
+    });
     // 悔棋不需要对方同意：棋盘状态随后就到，这条只负责提示
     NET.on('gomoku.undone', function (m) {
       var who = m.by === G.myColor ? '你' : '对方';

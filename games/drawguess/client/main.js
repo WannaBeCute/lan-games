@@ -193,6 +193,15 @@
         '<span class="tag cd' + (cdSecs(p.id) > 0 ? '' : ' hidden') + '" data-cdfor="' + p.id + '">冷却 ' + cdSecs(p.id) + 's</span>' +
         (m.state === 'playing' || m.state === 'turnEnd' || m.state === 'over'
           ? '<span class="score">' + p.score + '</span>' : '');
+      // 我是房主时，给其他活跃成员一个「转让房主」小按钮（自己那行不显示）
+      if (m.hostId === state.myId && p.id !== state.myId) {
+        var give = el('button', 'btn tiny ghost', '转让房主');
+        give.title = '把房主转给 ' + p.name;
+        give.onclick = (function (id) {
+          return function () { net.send({ t: 'ydwg.giveHost', target: id }); };
+        })(p.id);
+        row.appendChild(give);
+      }
       ml.appendChild(row);
     });
 
@@ -513,6 +522,8 @@
     state.done = m.done;
     state.canHint = false;
     state.hintLeft = m.hintUnlock || 0;      // 距离"可以发提示"还差多少秒
+    state.canGiveUp = false;                 // 「放弃绘画」要等对局满 1 分钟（tick 里解锁）
+    state.giveUpLeft = m.giveUpUnlock || 60;
     state.hintUsed = {};
     pad.resetAll();
     pad.setEnabled(state.isPainter);
@@ -544,7 +555,8 @@
       return;
     }
     var can = !!state.canHint;
-    var HINTS = [['type', '类型', -3], ['len', '几个字', -5], ['origin', '来自哪里', -8]];
+    // 三档提示统一 3 分（服务端 HINTS 也是 3；以前是 3/5/8，一次 8 分太疼没人敢给）
+    var HINTS = [['type', '类型', -3], ['len', '几个字', -3], ['origin', '来自哪里', -3]];
     HINTS.forEach(function (h) {
       var used = state.hintUsed && state.hintUsed[h[0]];
       var on = can && !used;
@@ -557,8 +569,36 @@
     });
 
     var sw = el('button', 'btn tiny ok', '换一个（剩 ' + (state.turn ? state.turn.swaps : 0) + '）');
+    sw.title = '换一道题（不扣分）';
     sw.onclick = function () { net.send({ t: 'ydwg.swap' }); };
     row.appendChild(sw);
+
+    /*
+     * 放弃绘画：本回合作废、直接进下一回合。
+     * 两次点击才算确认（第一下变成「确认放弃？」、4 秒不点自动变回来），免得误触。
+     * 对局没满 1 分钟时是灰的 —— 否则一开局就放弃，等于把"换题"变成免费无限次。
+     */
+    var give = el('button', 'btn tiny danger', '放弃绘画');
+    give.disabled = !state.canGiveUp;
+    give.title = state.canGiveUp
+      ? '放弃本回合，直接进入下一回合（需要再点一次确认）'
+      : ('对局进行满 1 分钟后才能放弃绘画（还差 ' + (state.giveUpLeft || 0) + ' 秒）');
+    give.onclick = function () {
+      if (give.dataset.ask !== '1') {
+        give.dataset.ask = '1';
+        give.textContent = '确认放弃？';
+        clearTimeout(give._t);
+        give._t = setTimeout(function () {
+          give.dataset.ask = '';
+          give.textContent = '放弃绘画';
+        }, 4000);
+        return;
+      }
+      give.dataset.ask = '';
+      give.textContent = '放弃绘画';
+      net.send({ t: 'ydwg.giveup' });
+    };
+    row.appendChild(give);
 
     if (!can) {
       // 还没到 30%：三个提示按钮是灰的，并且明确告诉画家还差多少秒
@@ -993,6 +1033,7 @@
     hideRolesPanel();
     state.syncedTurn = 1;
     state.hintUsed = {}; state.canHint = false; state.hintLog = '';
+    state.canGiveUp = false; state.giveUpLeft = 60;
     startTurn(m);
   });
 
@@ -1020,10 +1061,13 @@
     updateInfoClock();
     if (state.isPainter) {
       var wasCan = !!state.canHint;
+      var wasGive = !!state.canGiveUp;
       state.canHint = !!m.canHint;
       state.hintLeft = m.hintLeft != null ? m.hintLeft : 0;
-      if (state.canHint !== wasCan) {
-        renderHints();                       // 刚解锁：三个按钮一次性变亮
+      state.canGiveUp = !!m.canGiveUp;
+      state.giveUpLeft = m.giveUpLeft != null ? m.giveUpLeft : 0;
+      if (state.canHint !== wasCan || state.canGiveUp !== wasGive) {
+        renderHints();                       // 刚解锁：按钮变亮（提示 / 放弃绘画各一次）
       } else if (!state.canHint) {
         var badge = $('hintWait');
         if (badge) badge.textContent = hintWaitText(state.hintLeft);
@@ -1062,9 +1106,19 @@
   });
 
   net.on('ydwg.guessMiss', function (m) {
-    log('miss', '<span class="who">' + esc(m.name) + '</span> 猜：<b>' + esc(m.text) + '</b>（' + m.cd + 's 冷却）');
+    var mine = state.myId && m.id === state.myId;
+    log('miss', '<span class="who">' + esc(m.name) + '</span> 猜：<b>' + esc(m.text) + '</b>' +
+      (m.penalty ? '（扣 ' + m.penalty + ' 分）' : '') + '（' + m.cd + 's 冷却）');
+    // 猜错要付出代价：只提醒本人（别人扣分没必要弹给自己看）
+    if (mine && m.penalty) WB.ui.toast('猜错啦，扣 ' + m.penalty + ' 分', 'err');
     setCd(m.id, m.cd);
     if (state.room) renderMembers(state.room);
+  });
+
+  /* 画者放弃了这一回合：公布答案，然后服务端会直接开下一回合 */
+  net.on('ydwg.giveup', function (m) {
+    log('sys', esc(m.text || (m.by + ' 放弃了这一回合')));
+    WB.ui.toast(m.text || '画家放弃了这一回合', 'err');
   });
 
   net.on('ydwg.win', function (m) {

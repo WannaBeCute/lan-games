@@ -19,6 +19,17 @@ const SNAPSHOT_HZ = 20;          // 20Hz 广播足够（本游戏不需要坦克
 const MAX_PLAYERS = 4;
 const LEVELS = PACK.levels.map(function (raw) { return DodgeCore.normalizeLevel(raw); });
 
+/**
+ * 掉线宽限期（毫秒）。刷新页面 / 切后台 / 网络抖一下都会断开 WebSocket，
+ * 不能当场把人踢出房间 —— 否则房主一刷新房间就没了，"刚发的房间号别人加不进来"。
+ * 这段时间内带着同一把身份钥匙回来，座位原样还给他。
+ * 自动化测试可用 WB_DROP_GRACE_MS 压缩（和 WB_ROUND_LIMIT 一个路子）。
+ */
+const DROP_GRACE_MS = (function () {
+  const v = parseFloat(process.env.WB_DROP_GRACE_MS);
+  return (isFinite(v) && v >= 200) ? v : 30000;
+})();
+
 function newCode(rooms) {
   for (let i = 0; i < 5000; i++) {
     const c = String(1000 + Math.floor(Math.random() * 9000));
@@ -33,6 +44,10 @@ class DodgeHub {
   constructor(ctx) {
     this.ctx = ctx;
     this.rooms = new Map();       // code -> room
+    this.byKey = new Map();       // 身份钥匙 -> { code, clientId }（刷新/断线重连靠它回房）
+    const every = Math.max(200, Math.min(5000, Math.round(DROP_GRACE_MS / 4)));
+    const sweep = setInterval(() => this._sweepDropped(), every);
+    if (sweep.unref) sweep.unref();
   }
 
   roomCount() { return this.rooms.size; }
@@ -43,7 +58,13 @@ class DodgeHub {
   }
 
   /* ---------- 房间管理 ---------- */
-  create(client) {
+  /** 身份钥匙（平台层 WB.me 给每个标签页发的那把，刷新/重连后不变） */
+  _key(msg) {
+    const k = msg && msg.key;
+    return (typeof k === 'string' && k) ? k.slice(0, 64) : '';
+  }
+
+  create(client, msg) {
     this.leave(client);
     const code = newCode(this.rooms);
     const room = {
@@ -61,7 +82,7 @@ class DodgeHub {
       lastResult: null
     };
     this.rooms.set(code, room);
-    this._add(room, client);
+    this._add(room, client, this._key(msg));
     this.ctx.send(client, { t: 'dodge.created', code: code });
     this._push(room);
     console.log('[dodge] 房间', code, '由', client.name, '创建');
@@ -69,27 +90,82 @@ class DodgeHub {
 
   join(client, msg) {
     const code = String((msg && msg.code) || '').trim();
+    const key = this._key(msg);
     const room = this.rooms.get(code);
     if (!room) { this.ctx.send(client, { t: 'dodge.error', msg: '房间号不存在，请检查后重试' }); return; }
+
+    // 带着同一把钥匙回来（刷新/断线重连）→ 座位还给他，正在跑的这一关也照常接上
+    if (this._reattach(client, key, code)) {
+      this.ctx.send(client, { t: 'dodge.joined', code: code, resumed: true });
+      return;
+    }
+
     if (room.members.length >= MAX_PLAYERS) { this.ctx.send(client, { t: 'dodge.error', msg: '房间已满（最多 4 人）' }); return; }
     if (room.state === 'playing') { this.ctx.send(client, { t: 'dodge.error', msg: '这一关正在进行，等队伍回到大厅再加入吧' }); return; }
 
     this.leave(client);
-    this._add(room, client);
+    this._add(room, client, key);
     this.ctx.send(client, { t: 'dodge.joined', code: code });
     this._push(room);
   }
 
-  _add(room, client) {
+  /**
+   * 按身份钥匙把成员挂回这条新连接：clientId 换成新的，
+   * 输入槽、玩家实体、房主身份一起改挂过去（玩家索引 = 颜色/出生点下标，不能乱）。
+   */
+  _reattach(client, key, code) {
+    if (!key) return false;
+    const hit = this.byKey.get(key);
+    if (!hit) return false;
+    if (code && hit.code !== code) return false;
+    const room = this.rooms.get(hit.code);
+    if (!room) { this.byKey.delete(key); return false; }
+    const m = this._memberOf(room, hit.clientId);
+    if (!m) { this.byKey.delete(key); return false; }
+
+    const oldId = m.clientId;
+    if (oldId !== client.id) {
+      const oldClient = this.ctx.clients.get(oldId);
+      if (oldClient && oldClient !== client) { oldClient.room = null; oldClient.dodgeMember = null; }
+      m.clientId = client.id;
+      if (room.inputs[oldId]) { room.inputs[client.id] = room.inputs[oldId]; delete room.inputs[oldId]; }
+      this.ctx.clients.forEach(function (c) { /* 其它引用按 id 查，不用改 */ });
+      room.players.forEach(function (p) { if (p.clientId === oldId) p.clientId = client.id; });
+      if (room.hostId === oldId) room.hostId = client.id;
+      if (room.world && room.world.players) {
+        room.world.players.forEach(function (p) { if (p.clientId === oldId) p.clientId = client.id; });
+      }
+    }
+    if (!room.inputs[client.id]) room.inputs[client.id] = emptyInput();
+    m.dropped = false;
+    m.dropAt = 0;
+    client.room = room;
+    client.dodgeMember = m;
+    this.byKey.set(key, { code: room.code, clientId: client.id });
+
+    // 玩家自己的 index/color 依赖下标，重连后按当前顺序重算一遍再下发
+    room.players.forEach(function (p, i) { p.index = i; });
+    this.ctx.send(client, { t: 'dodge.you', index: room.players.findIndex(function (p) { return p.clientId === client.id; }), color: m.color });
+    this._push(room);
+    // 正在跑的这一关：把当前世界补发一份（和服务端权威状态一致）
+    if (room.state === 'playing' && room.world) this.ctx.send(client, this._worldPayload(room));
+    return true;
+  }
+
+  _add(room, client, key) {
     const index = room.members.length;
     const member = {
       clientId: client.id,
       name: client.name,
       color: DodgeCore.PLAYER_COLORS[index % DodgeCore.PLAYER_COLORS.length],
-      ready: false
+      ready: false,
+      key: key || '',
+      dropped: false,
+      dropAt: 0
     };
     room.members.push(member);
     room.inputs[client.id] = emptyInput();
+    if (member.key) this.byKey.set(member.key, { code: room.code, clientId: client.id });
     this.ctx.send(client, { t: 'dodge.you', index: index, color: member.color });
     console.log('[dodge] ', client.name, '加入房间', room.code, '（第 ' + (index + 1) + ' 位）');
   }
@@ -106,6 +182,22 @@ class DodgeHub {
     if (!m) return;
     m.ready = !!(msg && msg.ready);
     this._push(room);
+  }
+
+  /** 房主主动把房主转让给屋里另一位成员（任何房间状态都可以转） */
+  giveHost(client, msg) {
+    const room = this._roomOf(client);
+    if (!room) return;
+    if (room.hostId !== client.id) { this.ctx.send(client, { t: 'dodge.error', msg: '只有房主可以转让房主' }); return; }
+    const target = this._memberOf(room, String((msg && msg.target) || ''));
+    if (!target || target.clientId === client.id) { this.ctx.send(client, { t: 'dodge.error', msg: '只能选择房间里的其他成员' }); return; }
+    const oldHost = this._memberOf(room, client.id);
+    room.hostId = target.clientId;
+    // 旧房主当房主时本来视为就绪（开局检查排除房主），转出去要补上 ready，别害得新房主开不了局
+    if (oldHost) oldHost.ready = true;
+    this._broadcast(room, { t: 'dodge.host', name: target.name });
+    this._push(room);
+    console.log('[dodge] 房间', room.code, '房主转让给', target.name);
   }
 
   /** 房主选关 */
@@ -143,13 +235,21 @@ class DodgeHub {
       return p;
     });
     room.members.forEach(function (m) { m.ready = false; });
-    this._broadcast(room, {
-      t: 'dodge.levelStart',
-      index: index,
-      level: DodgeCore.serializeLevel(LEVELS[index]),
-      levelCount: LEVELS.length
-    });
+    this._broadcast(room, this._worldPayload(room));
     this._push(room);
+  }
+
+  /**
+   * 本关的场景下发内容：开局广播给所有人；
+   * 刷新/断线重连回来时也用它单独补发一份，客户端直接接上当前这一关。
+   */
+  _worldPayload(room) {
+    return {
+      t: 'dodge.levelStart',
+      index: room.levelIndex,
+      level: DodgeCore.serializeLevel(LEVELS[room.levelIndex]),
+      levelCount: LEVELS.length
+    };
   }
 
   /** 重来本关（任何人都可以按，整队一起重来） */
@@ -244,29 +344,120 @@ class DodgeHub {
     p.y = Number(msg && msg.y) || p.y;
   }
 
-  leave(client) {    const room = this._roomOf(client);
+  /**
+   * 主动离开（点「退出房间」/ 回主页）= 真实离开，房间该收就立刻收：
+   *   · 房主离开 → 整个房间当场解散
+   *   · 最后一个人离开 → 房间删除
+   * 断线/刷新不走这里，走 _drop（有宽限期）。
+   */
+  leave(client) {
+    const room = this._roomOf(client);
     if (!room) return;
     const idx = room.members.findIndex(function (m) { return m.clientId === client.id; });
     if (idx < 0) return;
-    const gone = room.members.splice(idx, 1)[0];
-    delete room.inputs[client.id];
-    room.players = (room.players || []).filter(function (p) { return p.clientId !== client.id; });
-    // 玩家索引就是颜色/出生点下标，走了一个人要把后面的补位，否则颜色会跳号
-    room.players.forEach(function (p, i) { p.index = i; p.color = room.members[i] ? room.members[i].color : p.color; });
+    const gone = room.members[idx];
+    client.room = null;
+    client.dodgeMember = null;
 
-    if (!room.members.length) { this._destroy(room.code); return; }
     if (room.hostId === client.id) {
-      room.hostId = room.members[0].clientId;
-      this._broadcast(room, { t: 'dodge.host', name: room.members[0].name });
+      this._dissolve(room, gone.name + '（房主）离开了，房间已解散');
+      return;
     }
+    this._removeMember(room, client.id, gone);
+    if (!room.members.length) { this._clearRoom(room); return; }
     this._broadcast(room, { t: 'dodge.playerLeft', name: gone.name });
     // 人少了，正在跑的这一关直接重来：不然剩下的人要在半路上干等
     if (room.state === 'playing') this._restartRoom(room);
     this._push(room);
   }
 
+  /** 连接断了（刷新/断网/切后台）：先标记掉线，留宽限期，别当场踢人 */
   onClose(client) {
-    this.leave(client);
+    this._drop(client);
+  }
+
+  _drop(client) {
+    const room = this._roomOf(client);
+    if (!room) return;
+    const m = this._memberOf(room, client.id);
+    client.room = null;
+    client.dodgeMember = null;
+    if (!m) return;
+    m.dropped = true;
+    m.dropAt = Date.now();
+    room.inputs[client.id] = emptyInput();       // 别让他掉线前的按键继续跑
+    const secs = Math.round(DROP_GRACE_MS / 1000);
+    this._broadcast(room, {
+      t: 'dodge.dropped',
+      name: m.name,
+      grace: secs,
+      msg: m.name + ' 掉线了，' + secs + ' 秒内回来座位还在'
+    });
+    this._push(room);
+  }
+
+  /** 宽限期到了还没回来 → 当作真离开 */
+  _sweepDropped() {
+    const now = Date.now();
+    for (const room of Array.from(this.rooms.values())) {
+      const gone = room.members.filter(function (m) { return m.dropped && now - (m.dropAt || 0) >= DROP_GRACE_MS; });
+      if (!gone.length) continue;
+      let dissolved = false;
+      for (const m of gone) {
+        if (room.hostId === m.clientId) { this._dissolve(room, '房主掉线太久，房间已解散'); dissolved = true; break; }
+        this._removeMember(room, m.clientId, m);
+        this._broadcast(room, { t: 'dodge.playerLeft', name: m.name });
+      }
+      if (dissolved || !this.rooms.has(room.code)) continue;
+      if (!room.members.length) { this._clearRoom(room); continue; }
+      if (room.state === 'playing') this._restartRoom(room);
+      this._push(room);
+    }
+  }
+
+  _removeMember(room, clientId, m) {
+    const idx = room.members.findIndex(function (x) { return x.clientId === clientId; });
+    if (idx >= 0) room.members.splice(idx, 1);
+    delete room.inputs[clientId];
+    room.players = (room.players || []).filter(function (p) { return p.clientId !== clientId; });
+    // 玩家索引就是颜色/出生点下标，走了一个人要把后面的补位，否则颜色会跳号
+    room.players.forEach(function (p, i) { p.index = i; p.color = room.members[i] ? room.members[i].color : p.color; });
+    if (m && m.key) {
+      const hit = this.byKey.get(m.key);
+      if (hit && hit.code === room.code && hit.clientId === clientId) this.byKey.delete(m.key);
+    }
+  }
+
+  /** 房间当场回收：通知屋里的人，然后删掉 */
+  _dissolve(room, text) {
+    if (!this.rooms.has(room.code)) return;
+    this._broadcast(room, { t: 'dodge.closed', msg: text || '房间已解散' });
+    this._clearRoom(room);
+    console.log('[dodge] 房间', room.code, '已回收：' + (text || ''));
+  }
+
+  _clearRoom(room) {
+    for (const m of room.members) {
+      const c = this.ctx.clients.get(m.clientId);
+      if (c) { c.room = null; c.dodgeMember = null; }
+      if (m.key) {
+        const hit = this.byKey.get(m.key);
+        if (hit && hit.code === room.code) this.byKey.delete(m.key);
+      }
+    }
+    this.rooms.delete(room.code);
+  }
+
+  /** 「回到我的房间」：客户端刷新后带着钥匙问一句 */
+  resume(client, msg) {
+    const key = this._key(msg);
+    const hit = key ? this.byKey.get(key) : null;
+    if (!hit || !this.rooms.get(hit.code) || !this._reattach(client, key, hit.code)) {
+      if (key) this.byKey.delete(key);
+      this.ctx.send(client, { t: 'dodge.resumeFailed' });
+      return;
+    }
+    this.ctx.send(client, { t: 'dodge.joined', code: hit.code, resumed: true });
   }
 
   onRename(client) {
@@ -433,8 +624,10 @@ DodgeHub.card = {
 DodgeHub.routes = {
   'dodge.create': 'create',
   'dodge.join': 'join',
+  'dodge.resume': 'resume',         // 刷新/重连后"回到我的房间"
   'dodge.leave': 'leave',
   'dodge.ready': 'ready',
+  'dodge.giveHost': 'giveHost',
   'dodge.level': 'level',
   'dodge.start': 'start',
   'dodge.restart': 'restart',

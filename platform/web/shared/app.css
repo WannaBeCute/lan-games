@@ -25,6 +25,8 @@
   --wash-2: rgba(255, 255, 255, .035);   /* 更淡的一层：列表条目、幽灵按钮 */
   --field: rgba(9, 12, 18, .6);          /* 输入框 / 键位框的凹陷底色 */
   --bubble-other: rgba(255, 255, 255, .07);   /* 聊天里"对方"的气泡底色 */
+  --float-1: #1a2231;                          /* 浮层（弹窗 / 私聊小窗）自己的底色 */
+  --float-2: #131922;
 }
 
 /* ============================================================
@@ -42,7 +44,7 @@ body.wb-light {
   --line2: #c2ccdd;
   --text: #1b2432;
   --dim: #56627a;
-  --dim2: #8892a4;
+  --dim2: #6b7488;
   --accent: #2f6fe0;
   --accent-d: #2559b8;
   --ok: #0f9668;
@@ -54,6 +56,8 @@ body.wb-light {
   --wash-2: rgba(15, 23, 42, .035);
   --field: #ffffff;
   --bubble-other: rgba(15, 23, 42, .06);
+  --float-1: #ffffff;
+  --float-2: #f4f6fa;
   background: var(--bg);
   background-image:
     radial-gradient(900px 520px at 12% -8%, rgba(47, 111, 224, .10), transparent 60%),
@@ -94,6 +98,11 @@ body.wb-light .topbar { background: rgba(255, 255, 255, .82); border-bottom-colo
   --wash-2: rgba(255, 255, 255, .035);
   --field: rgba(9, 12, 18, .6);
   --bubble-other: rgba(255, 255, 255, .07);
+  /* 浮层自己的底色（私聊小窗、好友弹窗的渐变）。必须走变量：
+     以前这里是写死的深色渐变，而浅色主题会把 --text 切成深色，
+     结果"深字压深底"，气泡和文字糊成一片 —— 就是这个变量存在的理由。 */
+  --float-1: #1a2231;
+  --float-2: #131922;
 }
 /* 显式选了浅色主题 → 浮层跟着浅（同样要有能看清的气泡底色） */
 body.wb-light .wb-dark {
@@ -104,7 +113,7 @@ body.wb-light .wb-dark {
   --line2: #c2ccdd;
   --text: #1b2432;
   --dim: #56627a;
-  --dim2: #8892a4;
+  --dim2: #6b7488;
   --accent: #2f6fe0;
   --ok: #0f9668;
   --warn: #ad6800;
@@ -114,6 +123,8 @@ body.wb-light .wb-dark {
   --wash-2: rgba(15, 23, 42, .035);
   --field: #ffffff;
   --bubble-other: rgba(15, 23, 42, .06);
+  --float-1: #ffffff;
+  --float-2: #f4f6fa;
 }
 
 * { box-sizing: border-box; }
@@ -188,6 +199,27 @@ button { font-family: inherit; }
 .net-badge.wait { color: var(--warn); border-color: rgba(245, 165, 36, .5); background: rgba(245, 165, 36, .1); }
 .net-badge.bad { color: var(--danger); border-color: rgba(255, 93, 108, .5); background: rgba(255, 93, 108, .1); }
 
+/* ---------- 全服公告条（顶栏正中间，控制台 /notice 发出） ---------- */
+.wb-notice {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 8px; max-width: 46vw; z-index: 41;
+  padding: 6px 12px; border-radius: 999px; font-size: 13px;
+  background: rgba(245, 165, 36, .13); border: 1px solid rgba(245, 165, 36, .5); color: var(--warn);
+}
+.wb-notice.hide { display: none; }
+.wb-notice-ico { flex: none; }
+.wb-notice-view { overflow: hidden; max-width: 38vw; }
+.wb-notice-text { display: inline-block; white-space: nowrap; }
+/* 内容超长才加 .scroll：从可视窗右侧起步，整体滚出左侧后循环 */
+.wb-notice-text.scroll { padding-left: 100%; animation: wbNoticeScroll linear infinite; }
+@keyframes wbNoticeScroll { to { transform: translateX(-100%); } }
+.wb-notice-x {
+  flex: none; background: none; border: 0; color: inherit; opacity: .75;
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px;
+}
+.wb-notice-x:hover { opacity: 1; }
+body.wb-light .wb-notice { background: rgba(173, 104, 0, .10); }
+
 /* ---------- 主页 ---------- */
 .hub-wrap { max-width: 1080px; margin: 0 auto; padding: 46px 24px 70px; }
 .hub-hero { text-align: center; margin-bottom: 40px; }
@@ -205,6 +237,17 @@ button { font-family: inherit; }
   transition: transform .18s ease, border-color .18s ease;
 }
 .game-card:hover { transform: translateY(-5px); border-color: #46618f; }
+/*
+ * 浅色主题：上面卡片底色是写死的深蓝渐变，白底上一块黑卡片非常突兀。
+ * 连卡片内部一起换：外壳换成浅色面板渐变，附属入口的悬停色换成深一档的蓝
+ * （原来的 #cfe0ff 淡蓝字压在白底上只有 1.2 对比度）。
+ */
+body.wb-light .game-card {
+  background: linear-gradient(180deg, #ffffff, #f3f6fb);
+  border-color: var(--line);
+}
+body.wb-light .game-card:hover { border-color: #a6bfe8; }
+body.wb-light .card-extra a:hover { color: #24589f; border-color: #a6bfe8; background: rgba(47, 111, 224, .10); }
 /* 卡片主体是一个链接；附属入口（如关卡编辑器）得放在它外面 —— a 里不能套 a */
 .game-card .card-main { display: block; color: inherit; text-decoration: none; }
 .game-card .art { height: 148px; border-radius: 14px; margin-bottom: 20px; overflow: hidden; position: relative; border: 1px solid var(--line); }
@@ -212,6 +255,8 @@ button { font-family: inherit; }
 .game-card p { margin: 0 0 16px; color: var(--dim); font-size: 14px; line-height: 1.7; }
 .tags { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 0 0 20px; }
 .tags li { font-size: 12px; padding: 4px 11px; border-radius: 999px; background: rgba(76, 141, 255, .13); color: #9dc0ff; border: 1px solid rgba(76, 141, 255, .28); }
+/* 浅色主题：上面那个淡蓝是给深色底配的，压在白底上只有 1.4 对比度，换深一档的蓝 */
+body.wb-light .tags li { background: rgba(47, 111, 224, .10); color: #24589f; border-color: rgba(47, 111, 224, .28); }
 .game-card .go { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--accent); }
 .game-card .go::after { content: '→'; transition: transform .18s ease; }
 .game-card:hover .go::after { transform: translateX(5px); }
@@ -250,7 +295,10 @@ button { font-family: inherit; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .wb-dialog {
   width: 100%; max-width: 720px; max-height: 88vh; display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #1a2231, #131922);
+  /* 走主题变量：以前写死深色渐变，浅色主题下 --dim 会变成深灰字，
+     压在深色弹窗上几乎看不见（实测对比度 1.5） */
+  background: linear-gradient(180deg, var(--float-1, #1a2231), var(--float-2, #131922));
+  color: var(--text);
   border: 1px solid var(--line2); border-radius: 18px; box-shadow: var(--shadow);
   animation: pop .18s ease;
 }
@@ -262,7 +310,7 @@ button { font-family: inherit; }
 .wb-dialog-body { padding: 20px 22px; overflow-y: auto; }
 .wb-dialog-foot { display: flex; justify-content: space-between; gap: 12px; padding: 16px 22px; border-top: 1px solid var(--line); }
 .wb-sec { margin-top: 22px; }
-.wb-sec h4 { margin: 0 0 10px; font-size: 14px; color: #9dc0ff; letter-spacing: .5px; }
+.wb-sec h4 { margin: 0 0 10px; font-size: 14px; color: var(--accent); letter-spacing: .5px; }
 .wb-hint { margin: 0 0 14px; font-size: 12.5px; color: var(--dim2); line-height: 1.7; }
 .wb-field { display: flex; align-items: center; gap: 14px; }
 .wb-field label { flex: 0 0 60px; color: var(--dim); font-size: 14px; }
@@ -285,7 +333,9 @@ input[type=range]::-webkit-slider-thumb {
   transition: all .15s ease;
 }
 .wb-gamechip:hover { border-color: var(--accent); color: var(--text); }
-.wb-gamechip.on { background: rgba(76, 141, 255, .22); border-color: var(--accent); color: #cfe0ff; }
+/* 选中态：以前是「淡蓝底 + 更淡的蓝字」，在浅色主题下两者几乎同色（对比度 1.05，
+   看着就是一个空白的白药丸）。改成实心强调色 + 白字，深浅两套都能看清。 */
+.wb-gamechip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .wb-gamechip.none { opacity: .55; }
 .wb-keycol { background: var(--field); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; }
 .wb-keycol-title { font-size: 13px; color: var(--dim); margin-bottom: 12px; font-weight: 700; }
