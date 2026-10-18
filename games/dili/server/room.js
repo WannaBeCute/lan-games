@@ -91,7 +91,9 @@ class DiliHub {
   boardGet(client, msg) {
     const key = this._normBoardKey(msg);
     if (!key) { this.ctx.send(client, { t: 'dili.board', list: [] }); return; }
-    const list = this._loadBoards()[key] || [];
+    let list = this._loadBoards()[key] || [];
+    // scope = 'local'：只看本机（同 IP）的成绩；默认全服
+    if (msg && msg.scope === 'local') list = list.filter(e => e.ip === client.ip);
     this.ctx.send(client, { t: 'dili.board', board: key, mode: (msg && msg.mode) || 'timed', list: this._publicList(list) });
   }
 
@@ -308,6 +310,17 @@ class DiliHub {
       total += v.length;
       clean[f] = v;
     }
+    // 纯色底：背景/键背景颜色，只能传 #rrggbb（颜色很短不计入体积）
+    const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+    for (const f of ['bgColor', 'keyBgColor']) {
+      const v = skin[f];
+      if (v === null || v === undefined || v === '') continue;
+      if (typeof v !== 'string' || !COLOR_RE.test(v)) {
+        this.ctx.send(client, { t: 'dili.skin.upload.fail', msg: '「' + f + '」颜色格式不合法' });
+        return;
+      }
+      clean[f] = v;
+    }
     if (total > SKIN_MAX_BYTES) {
       this.ctx.send(client, { t: 'dili.skin.upload.fail', msg: '皮肤整体超过 3MB，请压缩素材' }); return;
     }
@@ -352,6 +365,7 @@ class DiliHub {
       id: s.id, name: s.name, author: s.author, time: s.time,
       bg: s.bg || null, keyBg: s.keyBg || null, note: s.note || null, hit: s.hit || null,
       hitSound: s.hitSound || null, errSound: s.errSound || null,
+      bgColor: s.bgColor || null, keyBgColor: s.keyBgColor || null,
       hitOpacity: typeof s.hitOpacity === 'number' ? s.hitOpacity : 0.5
     };
   }
@@ -360,6 +374,22 @@ class DiliHub {
   register(client) {
     // 单人游戏不需要发什么状态；发个"就绪"让客户端知道 dili.* 路由活着
     this.ctx.send(client, { t: 'dili.hello' });
+  }
+
+  /** 改名同步：平台在 hello 里发现昵称变了会调这里，把榜上同一 IP 的名字全部改掉 */
+  onRename(client) {
+    const boards = this._loadBoards();
+    const name = String(client.name || '无名').slice(0, 12);
+    let changed = 0;
+    for (const key in boards) {
+      for (const e of boards[key]) {
+        if (e.ip === client.ip && e.name !== name) { e.name = name; changed++; }
+      }
+    }
+    if (changed) {
+      this._saveBoards();
+      console.log('[dili] 玩家', client.ip, '改名为「' + name + '」，已同步', changed, '条榜单记录');
+    }
   }
 
   busy() { return null; }
@@ -383,11 +413,13 @@ DiliHub.routes = {
 DiliHub.title = '底力练习器';
 DiliHub.entry = '/dili/';
 DiliHub.order = 60;
-DiliHub.hidden = true;    // 暂不上主页：/dili/ 直连进入
 DiliHub.card = {
   desc: '音游底力练习器（限时 / 无尽，4k-6k，皮肤广场）',
   tags: ['单人练习 · 不需要房间', '限时 / 无尽 · 4K / 5K / 6K', '皮肤工坊 + 皮肤广场', '排行榜实时看'],
-  links: []
+  links: [],
+  // 主页卡片的插画：相对于自己的入口，等于 /dili/card.svg。
+  // 不写这行主页就会用标题首字「底」当占位图。
+  art: 'card.svg'
 };
 
 module.exports = DiliHub;

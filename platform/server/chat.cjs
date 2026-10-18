@@ -152,6 +152,15 @@ class Chat {
   /* ================= 生命周期 / 统计 ================= */
   onClose(client) { this._detach(client); }
 
+  /** 控制台 /chat 查询用：某 IP 在当前所有活跃频道里的发言（含时间戳原样返回） */
+  logsOf(ip) {
+    const out = [];
+    for (const ch of this.channels.values()) {
+      for (const e of ch.log) if (e.from === ip) out.push(e);
+    }
+    return out;
+  }
+
   stats() {
     let members = 0;
     for (const ch of this.channels.values()) members += ch.members.size;

@@ -40,6 +40,22 @@ window.WB = window.WB || {};
       self.status = s;
       self.emit('status', s);
     };
+
+    /*
+     * 改名同步：设置里改了昵称就重发一次 hello，服务端发现名字变了会
+     * 调每个游戏的 onRename —— 排行榜等已存数据的显示名跟着一起改。
+     * 名字没设置时 playerName() 是随机兜底名，不能当「改名」依据，跳过。
+     */
+    window.addEventListener('wb:settings', function () {
+      if (!self.ws || self.ws.readyState !== 1) return;
+      var saved = '';
+      try { saved = String((WB.settings.get().name) || '').trim(); } catch (e) { return; }
+      if (!saved) return;
+      var cur = WB.playerName();
+      if (cur === self.sentName) return;
+      self.sentName = cur;
+      self.send({ t: 'hello', name: cur });
+    });
   }
 
   Net.prototype.connect = function () {
@@ -55,7 +71,8 @@ window.WB = window.WB || {};
     ws.onopen = function () {
       self.retry = 0;
       self._setStatus('open');
-      self.send({ t: 'hello', name: WB.playerName() });
+      self.sentName = WB.playerName();
+      self.send({ t: 'hello', name: self.sentName });
       var q = self.queue; self.queue = [];
       q.forEach(function (m) { self.send(m); });
       if (self.pingTimer) clearInterval(self.pingTimer);
@@ -76,7 +93,8 @@ window.WB = window.WB || {};
         if (msg.notice && msg.notice.text && WB.ui) WB.ui.notice(msg.notice.text);
         self.emit('hello', msg);
       }
-      if (msg.t === 'notice' && WB.ui) WB.ui.notice(msg.text);
+      // 想要的名字被别的电脑占了：服务端已分配兜底名，这里提示用户去设置里改名
+      if (msg.t === 'name.reject' && WB.ui && WB.ui.toast) WB.ui.toast(msg.msg || '名字已被使用', 'err');
       self.emit(msg.t, msg);
       self.emit('*', msg);
     };

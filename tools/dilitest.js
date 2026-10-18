@@ -7,7 +7,8 @@
  *   - 服务端排行榜：提交/查询/名次、同分排序、分数合理性校验、
  *                   自定义时长不上榜、限时预选档/无尽分榜互不串
  *   - 皮肤广场：上传/列表/获取、非法素材拒绝、超大皮肤拒绝
- *   - 平台约定：Hub.hidden（不在 /api/status 游戏列表里）+ /dili/ 直连可访问
+ *   - 平台约定：dili 已上架主页（/api/status 游戏列表里有卡片）+ /dili/ 页面可访问
+ *   - 名字注册表：全服独占（先到先得）、大小写归一、换名后旧名释放、重启后仍占用
  *   - 持久化：服务端重启后榜单还在
  */
 const fs = require('fs');
@@ -19,6 +20,7 @@ const { spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(ROOT, 'platform', 'server', 'server.cjs');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-dili-'));
+process.env.WB_NAMES_FILE = path.join(TMP, 'names-unit.json');   // 单元测试的注册表别写进真实存档
 
 let fails = 0, passes = 0;
 function ok(name, cond, extra) {
@@ -41,7 +43,9 @@ async function startServer(extraEnv) {
   SRVLOG = '';
   PROC = spawn(process.execPath, [SERVER, '--port', String(port)], {
     cwd: ROOT,
-    env: Object.assign({}, process.env, { WB_TEST_HOOKS: '1', WB_DILI_DATA_DIR: TMP }, extraEnv || {})
+    env: Object.assign({}, process.env, {
+      WB_TEST_HOOKS: '1', WB_DILI_DATA_DIR: TMP, WB_NAMES_FILE: path.join(TMP, 'names.json')
+    }, extraEnv || {})
   });
   PROC.stdout.on('data', d => { SRVLOG += d.toString(); });
   PROC.stderr.on('data', d => { SRVLOG += d.toString(); });
@@ -88,6 +92,19 @@ async function hello(c) {
   await c.wait('hello');
 }
 
+/* 发 hello 并拿到「发送之后」的那条应答（服务端在连接建立时会先推一条初始 hello，不能混） */
+async function helloWait(c, name) {
+  for (let i = 0; i < 100 && c.msgs.length === 0; i++) await sleep(30);   // 先等初始 hello 落地
+  const from = c.msgs.length;
+  c.send({ t: 'hello', name });
+  for (let i = 0; i < 100; i++) {
+    const got = c.msgs.slice(from).find(m => m.t === 'hello');
+    if (got) return got;
+    await sleep(30);
+  }
+  throw new Error('[' + c.tag + '] hello 无响应');
+}
+
 /* 1x1 透明 PNG 与最小合法音效 data URI */
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
@@ -122,12 +139,29 @@ async function main() {
   const dev = TC.deviationTime({ start: 0, end: 20000, pausedMs: 0, lastTap: 19500, score: 100, timeLimit: 20 });
   ok('坚持时间取多口径最大（最后按键 19.5s 主导）', dev === 19500, String(dev));
 
+  console.log('\n== 一·五、名字注册表（单元） ==');
+  const NameRegistry = require(path.join(ROOT, 'platform', 'server', 'name-registry.cjs'));
+  const reg = new NameRegistry();
+  ok('首次登记成功', reg.register('测试甲', '10.1.0.1') === true);
+  ok('别的 IP 不能再用这个名字', reg.available('测试甲', '10.1.0.2') === false);
+  ok('同 IP 可以继续用自己的名字', reg.available('测试甲', '10.1.0.1') === true);
+  ok('大小写归一查重（Tom / tom / TOM 同名）',
+    reg.register('Tom', '10.1.0.3') === true &&
+    reg.available('tom', '10.1.0.4') === false && reg.available('TOM ', '10.1.0.4') === false);
+  ok('ownerIp 反查注册者 IP', reg.ownerIp('tom') === '10.1.0.3');
+  reg.register('测试乙', '10.1.0.1');
+  ok('namesOfIp 列出该 IP 登记过的名字',
+    reg.namesOfIp('10.1.0.1').map(r => r.name).join('、') === '测试甲、测试乙');
+  ok('换名后旧名字自动释放给别人', reg.register('测试丙', '10.1.0.1') === true && reg.available('测试乙', '10.1.0.9') === true);
+  ok('释放的名字历史里仍可查', reg.namesOfIp('10.1.0.1').map(r => r.name).join('、') === '测试甲、测试乙、测试丙');
+
   console.log('\n== 二、服务端装配 ==');
   let srv = await startServer();
   const st = await (await fetch(srv.base + '/api/status')).json();
-  ok('Hub.hidden：主页游戏列表里没有底力练习器', !st.games.some(g => g.name === 'dili'));
+  const diliCard = st.games.find(g => g.name === 'dili');
+  ok('dili 已上架主页游戏列表', !!diliCard && !!diliCard.title, JSON.stringify(diliCard && { title: diliCard.title, entry: diliCard.entry }));
   const page = await fetch(srv.base + '/dili/');
-  ok('/dili/ 直连可访问（hidden 不挡静态挂载）', page.status === 200);
+  ok('/dili/ 页面可访问', page.status === 200);
   const core = await fetch(srv.base + '/dili/shared/dilicore.js');
   ok('内核静态挂载可用', core.status === 200);
 
@@ -215,6 +249,55 @@ async function main() {
   ok('破纪录：improved=true 且升到第 1', r.improved === true && r.rank === 1);
   ok('记录带创造时间（date 是毫秒时间戳）', typeof r.ownBest.date === 'number' && r.ownBest.date > 1600000000000, String(r.ownBest.date));
 
+  /* ---- 改名同步：hello 带新名字 → 榜上同一 IP 的记录一起改名 ---- */
+  const A4 = await fresh('小明', '10.9.0.1');
+  A4.send({ t: 'hello', name: '小明王' });
+  await A4.wait('hello');
+  A4.send({ t: 'dili.board.get', mode: 'timed', keys: 4, seconds: 20 });
+  r = await A4.wait('dili.board');
+  ok('改名后榜上该 IP 的名字全部同步',
+    r.list.some(e => e.ip === '10.9.0.1' && e.name === '小明王') &&
+    r.list.every(e => e.ip !== '10.9.0.1' || e.name === '小明王'),
+    JSON.stringify(r.list.map(e => e.ip + ':' + e.name)));
+
+  /* ---- 名字全服独占：先到先得，别的电脑不能冒用 ---- */
+  const N1 = await client('路人丙', srv.port, '10.9.0.31');
+  const n1hi = await helloWait(N1, '路人丙');
+  ok('首次登记：想要的名字直接可用', n1hi.name === '路人丙', n1hi.name);
+  const N2raw = await client('路人丙', srv.port, '10.9.0.32');
+  const n2hi = await helloWait(N2raw, '路人丙');
+  ok('名字被占用：hello 返回兜底名而非想要的名字', n2hi.name !== '路人丙' && /^玩家\d{3}$/.test(n2hi.name), n2hi.name);
+  const rejMsg = await N2raw.wait('name.reject');
+  ok('被占用时收到 name.reject 提示', rejMsg.name === '路人丙' && /已被/.test(rejMsg.msg), rejMsg.msg);
+  N2raw.ws.close();
+  const N3 = await client('路人丙', srv.port, '10.9.0.31');
+  const n3hi = await helloWait(N3, '路人丙');
+  ok('同 IP 重复用自己的名字放行', n3hi.name === '路人丙', n3hi.name);
+  N3.ws.close();
+
+  /* ---- 换名释放：不再用的名字让给别人 ---- */
+  const R1 = await client('路人丁', srv.port, '10.9.0.41');
+  const r1a = await helloWait(R1, '路人丁');
+  const r1b = await helloWait(R1, '路人戊');
+  ok('改名成功：hello 返回新名字', r1a.name === '路人丁' && r1b.name === '路人戊', r1a.name + '→' + r1b.name);
+  const R2 = await client('路人丁', srv.port, '10.9.0.42');
+  const r2hi = await helloWait(R2, '路人丁');
+  ok('换下来的旧名字释放给别人用', r2hi.name === '路人丁', r2hi.name);
+  R2.ws.close();
+  R1.ws.close();
+
+  /* ---- 全服 / 本地 scope ---- */
+  const L1 = await fresh('路人乙', '10.9.0.9');
+  L1.send({ t: 'dili.board.submit', mode: 'timed', keys: 4, seconds: 20, score: 60, timeMs: 20000, cps: 3, errors: 0 });
+  await L1.wait('dili.board.result');
+  L1.send({ t: 'dili.board.get', mode: 'timed', keys: 4, seconds: 20, scope: 'local' });
+  r = await L1.wait('dili.board');
+  ok('scope=local 只返回本机（同 IP）成绩', r.list.length === 1 && r.list[0].ip === '10.9.0.9', 'n=' + r.list.length);
+  L1.send({ t: 'dili.board.get', mode: 'timed', keys: 4, seconds: 20 });
+  r = await L1.wait('dili.board');
+  ok('默认（全服）能看到所有人', r.list.length >= 3, 'n=' + r.list.length);
+  L1.ws.close();
+
   /* ---- 点赞：一人一票，不能赞自己 ---- */
   const C1 = await fresh('路人甲', '10.9.0.3');
   C1.send({ t: 'dili.like', mode: 'timed', keys: 4, seconds: 20, target: '10.9.0.1' });
@@ -234,7 +317,7 @@ async function main() {
   C1.ws.close();
 
   console.log('\n== 四、皮肤广场 ==');
-  const B6 = await fresh('阿强');   // 上传限速 10s/连接，换新连接
+  const B6 = await fresh('皮肤师', '10.0.0.99');   // 上传限速 10s/连接，换新连接（固定 IP 才能复用自己的名字）
   B6.send({ t: 'dili.skin.upload', skin: { name: '测试皮肤', bg: PNG, note: PNG, hit: PNG, hitOpacity: 0.6, hitSound: WAV } });
   r = await B6.wait('dili.skin.upload.ok');
   const skinId = r.id;
@@ -247,19 +330,36 @@ async function main() {
   A.send({ t: 'dili.skin.get', id: skinId });
   r = await A.wait('dili.skin.one');
   ok('按 id 拉取皮肤，素材完整、透明度正确',
-    r.skin && r.skin.note === PNG && r.skin.hitOpacity === 0.6 && r.skin.hitSound === WAV && r.skin.author === '阿强');
+    r.skin && r.skin.note === PNG && r.skin.hitOpacity === 0.6 && r.skin.hitSound === WAV && r.skin.author === '皮肤师');
 
-  const B7 = await fresh('阿强');
+  const B7 = await fresh('皮肤师', '10.0.0.99');
   B7.send({ t: 'dili.skin.upload', skin: { name: '坏皮肤', note: 'http://evil/x.png' } });
   r = await B7.wait('dili.skin.upload.fail');
   ok('非 data URI 的素材被拒', /合法/.test(r.msg), r.msg);
   B7.ws.close();
 
-  const B8 = await fresh('阿强');
+  const B8 = await fresh('皮肤师', '10.0.0.99');
   B8.send({ t: 'dili.skin.upload', skin: { name: '大皮肤', note: 'data:image/png;base64,' + 'A'.repeat(900 * 1024) } });
   r = await B8.wait('dili.skin.upload.fail');
   ok('超大素材被拒（单件 ≤ 900KB）', /太大|900/.test(r.msg), r.msg);
   B8.ws.close();
+
+  const B9 = await fresh('皮肤师', '10.0.0.99');   // 带纯色底的皮肤（bgColor/keyBgColor）
+  B9.send({ t: 'dili.skin.upload', skin: { name: '带色皮肤', bgColor: '#eef2ff', keyBgColor: '#112233' } });
+  r = await B9.wait('dili.skin.upload.ok');
+  const colorSkinId = r.id;
+  ok('带纯色底的皮肤上传成功', !!colorSkinId);
+  B9.ws.close();
+
+  const B10 = await fresh('皮肤师', '10.0.0.99');  // 颜色格式校验
+  B10.send({ t: 'dili.skin.upload', skin: { name: '坏颜色', bgColor: 'red' } });
+  r = await B10.wait('dili.skin.upload.fail');
+  ok('非 #rrggbb 的颜色被拒', /颜色/.test(r.msg), r.msg);
+  B10.ws.close();
+
+  A.send({ t: 'dili.skin.get', id: colorSkinId });
+  r = await A.wait('dili.skin.one');
+  ok('颜色字段完整保存并回传', r.skin && r.skin.bgColor === '#eef2ff' && r.skin.keyBgColor === '#112233');
 
   A.send({ t: 'dili.skin.get', id: '不存在的id!' });
   r = await A.wait('dili.skin.get.fail');
@@ -274,11 +374,16 @@ async function main() {
   C.send({ t: 'dili.board.get', mode: 'timed', keys: 4, seconds: 20 });
   r = await C.wait('dili.board');
   ok('重启后榜单还在（落盘生效，含去重后的最优成绩与点赞数）',
-    r.list.length === 2 && r.list[0].score === 400 && r.list[0].likes === 1,
+    r.list.length === 3 && r.list[0].score === 400 && r.list[0].likes === 1,
     JSON.stringify({ n: r.list.length, top: r.list[0] && r.list[0].score, likes: r.list[0] && r.list[0].likes }));
   C.send({ t: 'dili.skin.list' });
   r = await C.wait('dili.skins');
   ok('重启后皮肤广场还在', r.list.some(s => s.id === skinId));
+
+  const C2 = await client('路人丙', srv.port, '10.9.0.32');
+  const c2hi = await helloWait(C2, '路人丙');
+  ok('重启后名字仍被占用（注册表落盘生效）', c2hi.name !== '路人丙', c2hi.name);
+  C2.ws.close();
 
   C.ws.close();
   await stopServer();

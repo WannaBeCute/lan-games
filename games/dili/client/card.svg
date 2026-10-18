@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 148" width="600" height="148" role="img" aria-label="底力练习器：浅色纸面上黑色方块音符沿四条轨道下落，底部判定线上标着键位字母">
+  <defs>
+    <!-- 页面同款浅色底：微弱的蓝/紫氛围光 -->
+    <radialGradient id="glowBlue" cx="0.14" cy="-0.1" r="0.9">
+      <stop offset="0" stop-color="#2f6fe0" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#2f6fe0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowPurple" cx="0.9" cy="0.05" r="0.9">
+      <stop offset="0" stop-color="#8d3fd0" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#8d3fd0" stop-opacity="0"/>
+    </radialGradient>
+    <!-- 正在按下的轨道：判定线到上方的淡蓝高亮 -->
+    <linearGradient id="pressGlow" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#2f6fe0" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#2f6fe0" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 纸面底色 -->
+  <rect width="600" height="148" fill="#f7f7f5"/>
+  <rect width="600" height="148" fill="url(#glowBlue)"/>
+  <rect width="600" height="148" fill="url(#glowPurple)"/>
+
+  <!-- 4 条轨道（4K）：F 键那列正在被按，整条轨淡蓝高亮 -->
+  <rect x="256" y="0" width="44" height="148" fill="url(#pressGlow)"/>
+  <g stroke="rgba(0,0,0,0.10)" stroke-width="1">
+    <line x1="212" y1="0" x2="212" y2="148"/>
+    <line x1="256" y1="0" x2="256" y2="148"/>
+    <line x1="300" y1="0" x2="300" y2="148"/>
+    <line x1="344" y1="0" x2="344" y2="148"/>
+    <line x1="388" y1="0" x2="388" y2="148"/>
+  </g>
+
+  <!-- 下落中的黑色方块音符（和游戏里一样：铺满轨道的正方形） -->
+  <g fill="#17181c">
+    <rect x="213" y="28" width="42" height="42" rx="3"/>
+    <rect x="257" y="-8" width="42" height="42" rx="3"/>
+    <rect x="301" y="86" width="42" height="42" rx="3"/>
+    <rect x="345" y="52" width="42" height="42" rx="3"/>
+  </g>
+
+  <!-- 判定线：F 轨上是「击中瞬间」（淡蓝方块 + PERFECT） -->
+  <g>
+    <line x1="0" y1="122" x2="600" y2="122" stroke="rgba(0,0,0,0.18)" stroke-width="2"/>
+    <rect x="257" y="123" width="42" height="42" fill="#2f6fe0" opacity="0.22" rx="3"/>
+    <text x="278" y="106" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700"
+          font-size="12" fill="#2f6fe0" letter-spacing="2">PERFECT</text>
+  </g>
+
+  <!-- 判定线上的键位字母 -->
+  <g font-family="Consolas, monospace" font-weight="700" font-size="19"
+     fill="rgba(0,0,0,0.20)" text-anchor="middle" letter-spacing="1">
+    <text x="234" y="141">D</text>
+    <text x="278" y="141">F</text>
+    <text x="322" y="141">J</text>
+    <text x="366" y="141">K</text>
+  </g>
+
+  <!-- 左上：曲名；右上：分数 HUD -->
+  <g font-family="Arial, sans-serif">
+    <text x="20" y="30" font-size="13" font-weight="700" fill="#1b2432" opacity="0.85">Endless · 4K</text>
+    <text x="20" y="48" font-size="10" fill="#56627a" opacity="0.8">120.0 BPM</text>
+
+    <rect x="500" y="14" width="86" height="40" rx="8" fill="#ffffff" stroke="#dbe2ec"/>
+    <text x="543" y="31" text-anchor="middle" font-size="9" fill="#56627a" letter-spacing="1">SCORE</text>
+    <text x="543" y="47" text-anchor="middle" font-size="14" font-weight="700" fill="#2f6fe0">128,430</text>
+
+    <rect x="500" y="62" width="86" height="26" rx="8" fill="#ffffff" stroke="#dbe2ec"/>
+    <text x="512" y="79" font-size="10" font-weight="700" fill="#8d3fd0">283</text>
+    <text x="530" y="79" font-size="9" fill="#56627a">COMBO</text>
+    <text x="576" y="79" text-anchor="end" font-size="9" font-weight="700" fill="#0f9668">98.6%</text>
+  </g>
+</svg>

@@ -14,8 +14,8 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function
 /* ================= 无尽模式参数（钢琴块式下落） ================= */
 var ENDLESS_START_SPEED = 3.0;    // 起始速度（键/秒）
 var ENDLESS_MAX_SPEED = 26;       // 速度上限（键/秒）
-var ENDLESS_GROW = 1.015;         // 每过一行速度乘这个系数
-var ENDLESS_GROW_ADD = 0.02;      // 再额外加一点，起步不至于太肉
+var ENDLESS_GROW = 1.008;         // 每过一行速度乘这个系数（放慢加速：100 行约 8 键/秒）
+var ENDLESS_GROW_ADD = 0.01;      // 再额外加一点，起步不至于太肉
 
 /* ================= 全局状态 ================= */
 var S = {
@@ -24,7 +24,8 @@ var S = {
   layout: null,                    // { width, block, judge, showKeys }
   skin: null,                      // 当前皮肤（null = 默认皮肤）
   draft: null,                     // 皮肤编辑器草稿
-  capturing: false                 // 主页正在「按新键…」抓键，防重复触发
+  capturing: false,                // 主页正在「按新键…」抓键，防重复触发
+  restartKey: 'KeyR'               // 一键重来键（游戏中随时按下立即重开）
 };
 
 /* ================= 存档 ================= */
@@ -176,6 +177,16 @@ function startGame() {
   G.raf = requestAnimationFrame(frame);
 }
 
+/** 一键重来：丢弃当前对局（不结算、不上传排行榜），立即开新一局 */
+function quickRestart() {
+  if (G && !G.over) {
+    G.over = true; G.running = false;
+    if (G.raf) { cancelAnimationFrame(G.raf); G.raf = 0; }
+  }
+  mask('resultMask', false);
+  startGame();
+}
+
 /** 布局：算尺寸、铺轨道底图与键位字母、重排已有音符 */
 function applyLayout() {
   G.metrics = metrics();
@@ -186,6 +197,7 @@ function applyLayout() {
   inner.style.height = m.h + 'px';        // 底边 = 判定线（判定线以上才是可落区域）
 
   $('gameBg').style.backgroundImage = (S.skin && S.skin.bg) ? 'url(' + S.skin.bg + ')' : 'none';
+  $('gameBg').style.backgroundColor = (S.skin && S.skin.bgColor) || '';
 
   var lanes = $('gameLanes');
   lanes.innerHTML = '';
@@ -195,6 +207,7 @@ function applyLayout() {
     lane.style.left = (i * m.blockSize) + 'px';
     lane.style.width = m.blockSize + 'px';
     if (S.skin && S.skin.keyBg) lane.style.backgroundImage = 'url(' + S.skin.keyBg + ')';
+    lane.style.backgroundColor = (S.skin && S.skin.keyBgColor) || '';
     lanes.appendChild(lane);
   }
   var kl = $('gameKeys');
@@ -486,7 +499,9 @@ function initNet() {
 }
 
 /* ================= 皮肤 ================= */
-var SKIN_FIELDS = ['bg', 'keyBg', 'note', 'hit', 'hitSound', 'errSound'];
+var SKIN_FIELDS = ['bg', 'keyBg', 'note', 'hit', 'hitSound', 'errSound', 'bgColor', 'keyBgColor'];
+/* 颜色选择器需要的 #rrggbb 格式；不合法就回落到默认展示值 */
+function colorInputValue(c, fallback) { return /^#[0-9a-fA-F]{6}$/.test(c || '') ? c : fallback; }
 function defaultSkin() { return { name: '默认皮肤', hitOpacity: 0.5 }; }
 function applySkin(skin, persist) {
   S.skin = skin || null;
@@ -508,6 +523,8 @@ function openSkinEditor() {
   $('skinName').value = cur.name && cur.name !== '默认皮肤' ? cur.name : '';
   $('skinOpacity').value = Math.round((typeof cur.hitOpacity === 'number' ? cur.hitOpacity : 0.5) * 100);
   $('valOpacity').textContent = $('skinOpacity').value + '%';
+  $('colorBg').value = colorInputValue(cur.bgColor, '#f7f7f5');
+  $('colorKeyBg').value = colorInputValue(cur.keyBgColor, '#ffffff');
   for (var i = 0; i < SKIN_FIELDS.length; i++) {
     var f = SKIN_FIELDS[i];
     S.draft[f] = cur[f] || null;
@@ -550,6 +567,7 @@ function collectDraft() {
     name: ($('skinName').value || '').trim() || '未命名皮肤',
     bg: d.bg || null, keyBg: d.keyBg || null, note: d.note || null, hit: d.hit || null,
     hitSound: d.hitSound || null, errSound: d.errSound || null,
+    bgColor: d.bgColor || null, keyBgColor: d.keyBgColor || null,
     hitOpacity: Number($('skinOpacity').value) / 100
   };
 }
@@ -560,6 +578,7 @@ function renderPreview() {
   var box = $('previewBox');
   var w = box.clientWidth || 220;
   $('pvBg').style.backgroundImage = d.bg ? 'url(' + d.bg + ')' : 'none';
+  $('pvBg').style.backgroundColor = d.bgColor || '';
   var lanes = $('pvLanes');
   lanes.innerHTML = '';
   for (var i = 0; i < 4; i++) {
@@ -567,6 +586,7 @@ function renderPreview() {
     lane.className = 'pv-lane';
     lane.style.left = (i * 25) + '%'; lane.style.width = '25%';
     if (d.keyBg) lane.style.backgroundImage = 'url(' + d.keyBg + ')';
+    lane.style.backgroundColor = d.keyBgColor || '';
     lanes.appendChild(lane);
   }
   var note = $('pvNote'), hit = $('pvHit');
@@ -617,6 +637,28 @@ function renderPlaza(list) {
   }
 }
 
+/* ================= 一键重来键 ================= */
+/** 刷新所有显示重来键的地方（HUD 徽标、准备界面、布局弹窗） */
+function refreshRestartUI() {
+  var label = codeLabel(S.restartKey || 'KeyR');
+  var hud = $('hudRestart');
+  if (hud) {
+    hud.textContent = '⟳ ' + label + ' 重来';
+    hud.title = '按 ' + label + ' 立即重开一局';
+  }
+  $('valRestartKey').textContent = label;
+  $('layRestartKey').textContent = label;
+  $('readyRestart').innerHTML = '按 <b>' + esc(label) + '</b> 随时重开一局';
+}
+/** 重来键不能和任何键数的轨道键重复，否则会抢判定 */
+function restartKeyConflicts(code) {
+  for (var p = 0; p < 3; p++) {
+    var map = WB.settings.keysFor('dili', p) || {};
+    for (var t = 1; t <= 6; t++) if (map['t' + t] === code) return true;
+  }
+  return false;
+}
+
 /* ================= 布局面板 ================= */
 function openLayout() {
   var l = S.layout;
@@ -629,9 +671,9 @@ function openLayout() {
   mask('layoutMask', true);
 }
 /* ================= 排行榜（菜单侧栏，实时） ================= */
-var boardSel = { mode: 'timed', keys: 4, seconds: 20 };
+var boardSel = { mode: 'timed', keys: 4, seconds: 20, scope: 'all' };   // scope: 'all'=全服 | 'local'=本机
 function refreshBoard() {
-  S.net.send({ t: 'dili.board.get', mode: boardSel.mode, keys: boardSel.keys, seconds: boardSel.seconds });
+  S.net.send({ t: 'dili.board.get', mode: boardSel.mode, keys: boardSel.keys, seconds: boardSel.seconds, scope: boardSel.scope });
 }
 function bindBoardChips() {
   function chips(rowId, attr, key) {
@@ -642,11 +684,14 @@ function bindBoardChips() {
         var all = row.querySelectorAll('.chip');
         for (var j = 0; j < all.length; j++) all[j].classList.remove('on');
         this.classList.add('on');
-        boardSel[key] = Number(this.getAttribute(attr));
+        var raw = this.getAttribute(attr);
+        var num = Number(raw);
+        boardSel[key] = (raw !== '' && isFinite(num)) ? num : raw;   // 数字档位存数字，scope 之类存字符串
         refreshBoard();
       };
     }
   }
+  chips('boardScope', 'data-scope', 'scope');
   chips('boardKeys', 'data-bkeys', 'keys');
   chips('boardMode', 'data-bmode', 'mode');
   chips('boardSecs', 'data-bsec', 'seconds');
@@ -664,8 +709,11 @@ function bindBoardChips() {
 function renderBoard(list, mode) {
   var box = $('menuBoard');
   var endless = mode === 'endless' || (mode == null && boardSel.mode === 'endless');
+  S.boardList = list || [];            // 留一份给「点行看详情」用
   if (!list || !list.length) {
-    box.innerHTML = '<p class="dim small">这个赛道貌似还没人挑战欸，快去挑战！</p>';
+    box.innerHTML = '<p class="dim small">' + (boardSel.scope === 'local'
+      ? '本机在这个赛道还没有成绩，去打一把！'
+      : '这个赛道貌似还没人挑战欸，快去挑战！') + '</p>';
     return;
   }
   var html = '<table><tr><th>#</th><th>玩家</th><th>' + (endless ? '最终速度' : '分数') + '</th><th>赞</th><th>创造时间</th></tr>';
@@ -675,7 +723,7 @@ function renderBoard(list, mode) {
     var when = new Date(e.date);
     var whenStr = (when.getMonth() + 1) + '/' + when.getDate() + ' ' +
       ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2);
-    html += '<tr' + (i === 0 ? ' class="top1"' : '') + '><td class="num">' + (i + 1) + arrow + '</td>' +
+    html += '<tr data-idx="' + i + '" title="点击查看成绩详情"' + (i === 0 ? ' class="top1"' : '') + '><td class="num">' + (i + 1) + arrow + '</td>' +
       '<td>' + esc(e.name) + '</td>' +
       '<td class="num"><b>' + (endless ? (e.score / 100).toFixed(2) + ' 键/秒' : e.score) + '</b></td>' +
       '<td class="num"><button class="like-btn" data-like="' + esc(e.ip) + '" title="给 TA 点赞">👍 ' + (e.likes || 0) + '</button></td>' +
@@ -683,10 +731,38 @@ function renderBoard(list, mode) {
   }
   html += '</table>';
   box.innerHTML = html;
+  var rows = box.querySelectorAll('tr[data-idx]');
+  for (var r = 0; r < rows.length; r++) {
+    rows[r].onclick = function () {
+      var idx = Number(this.getAttribute('data-idx'));
+      if (S.boardList[idx]) showDetail(S.boardList[idx], idx + 1);
+    };
+  }
   var btns = box.querySelectorAll('[data-like]');
   for (var j = 0; j < btns.length; j++) {
-    btns[j].onclick = function () { S.net.send({ t: 'dili.like', mode: boardSel.mode, keys: boardSel.keys, seconds: boardSel.seconds, target: this.getAttribute('data-like') }); };
+    btns[j].onclick = function (ev) {
+      ev.stopPropagation();            // 点赞不要顺带打开详情
+      S.net.send({ t: 'dili.like', mode: boardSel.mode, keys: boardSel.keys, seconds: boardSel.seconds, target: this.getAttribute('data-like') });
+    };
   }
+}
+
+/** 成绩详情：点排行榜上的一行弹出（含局域网 IP） */
+function showDetail(e, rank) {
+  var endless = boardSel.mode === 'endless';
+  $('bdHead').textContent = (e.name || '无名') + ' · ' + (endless ? '无尽模式' : '限时模式');
+  $('bdRank').textContent = '#' + rank;
+  $('bdScore').textContent = endless ? (e.score / 100).toFixed(2) + ' 键/秒' : e.score + ' 分';
+  $('bdCps').textContent = (Number(e.cps) || 0).toFixed(2);
+  $('bdTime').textContent = (e.timeMs / 1000).toFixed(2) + 's';
+  $('bdErr').textContent = e.errors || 0;
+  $('bdLikes').textContent = e.likes || 0;
+  var d = new Date(e.date);
+  $('bdDate').textContent = d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
+    ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+  $('bdTrend').textContent = e.trend === 'up' ? '▲ 上升' : (e.trend === 'down' ? '▼ 下降' : '— 持平');
+  $('bdIp').textContent = e.ip || '--';
+  mask('detailMask', true);
 }
 
 /* ================= 事件绑定 ================= */
@@ -725,9 +801,10 @@ function bindMenu() {
   $('btnLayout').onclick = openLayout;
   $('btnSkin').onclick = openSkinEditor;
 
-  $('btnRetry').onclick = function () { mask('resultMask', false); startGame(); };
+  $('btnRetry').onclick = function () { quickRestart(); };
   $('btnBackMenu').onclick = function () { mask('resultMask', false); show('scr-menu'); };
   $('btnPause').onclick = function () { togglePause(); };
+  $('hudRestart').onclick = function () { quickRestart(); };   // 点徽标也能重开
   $('btnQuit').onclick = function () {
     if (G && !G.over) { G.over = true; G.running = false; if (G.raf) { cancelAnimationFrame(G.raf); G.raf = 0; } }
     $('pauseOverlay').style.display = 'none';
@@ -758,6 +835,113 @@ function bindLayout() {
     openLayout();
   };
   $('layClose').onclick = function () { mask('layoutMask', false); };
+  // 一键重来键：点键帽抓一次按键（与主页改键同一套抓键逻辑）
+  $('layRestartKey').onclick = function () {
+    if (S.capturing) return;
+    S.capturing = true;
+    var btn = this;
+    var old = btn.textContent;
+    btn.classList.add('capturing');
+    btn.textContent = '按新键…';
+    WB.keys.capture(function (code) {
+      S.capturing = false;
+      btn.classList.remove('capturing');
+      btn.textContent = old;
+      if (!code) return;                       // Esc 取消
+      if (restartKeyConflicts(code)) { WB.ui.toast('该键已被轨道键占用，换一个吧', 'err'); return; }
+      S.restartKey = code;
+      saveJson('dili.restartKey', code);
+      refreshRestartUI();
+      WB.ui.toast('一键重来键已改为 ' + codeLabel(code), 'ok');
+    });
+  };
+}
+
+/* ---- 1:1 裁剪：键背景/音符/击中后图片必须严格 1:1，不合就在原图里截一块 ---- */
+var CROP = { field: null, uri: null, natW: 0, natH: 0, dispW: 0, dispH: 0, sel: { x: 0, y: 0, s: 0 }, dragging: null, startX: 0, startY: 0, orig: null };
+
+function requireSquare(field, uri) {
+  var img = new Image();
+  img.onload = function () {
+    if (img.naturalWidth === img.naturalHeight && img.naturalWidth > 0) {
+      S.draft[field] = uri;
+      updateThumbs(); updateSizeTip(); renderPreview();
+      return;
+    }
+    openCrop(field, uri);
+  };
+  img.onerror = function () { WB.ui.toast('图片读取失败，换一张试试', 'err'); };
+  img.src = uri;
+}
+
+function openCrop(field, uri) {
+  var img = new Image();
+  img.onload = function () {
+    CROP.field = field; CROP.uri = uri;
+    CROP.natW = img.naturalWidth; CROP.natH = img.naturalHeight;
+    $('cropImg').src = uri;
+    mask('cropMask', true);
+    // 等弹窗布局完一帧再初始化选区（否则拿不到图片显示尺寸）
+    requestAnimationFrame(function () {
+      var r = $('cropImg').getBoundingClientRect();
+      CROP.dispW = r.width; CROP.dispH = r.height;
+      var s = Math.min(r.width, r.height);
+      CROP.sel = { x: (r.width - s) / 2, y: (r.height - s) / 2, s: s };   // 默认取中央最大内切正方形
+      applyCropSel();
+    });
+  };
+  img.src = uri;
+}
+
+function applyCropSel() {
+  var sel = $('cropSel');
+  sel.style.left = CROP.sel.x + 'px';
+  sel.style.top = CROP.sel.y + 'px';
+  sel.style.width = CROP.sel.s + 'px';
+  sel.style.height = CROP.sel.s + 'px';
+}
+
+function bindCropEvents() {
+  var handle = $('cropHandle');
+  $('cropStage').addEventListener('pointerdown', function (e) {
+    var sr = $('cropSel').getBoundingClientRect();
+    var onHandle = e.target === handle;
+    var onSel = onHandle || (e.clientX >= sr.left && e.clientX <= sr.right && e.clientY >= sr.top && e.clientY <= sr.bottom);
+    if (!onSel) return;
+    CROP.dragging = onHandle ? 'resize' : 'move';
+    CROP.startX = e.clientX; CROP.startY = e.clientY;
+    CROP.orig = { x: CROP.sel.x, y: CROP.sel.y, s: CROP.sel.s };
+    e.preventDefault();
+  });
+  window.addEventListener('pointermove', function (e) {
+    if (!CROP.dragging) return;
+    var dx = e.clientX - CROP.startX, dy = e.clientY - CROP.startY;
+    if (CROP.dragging === 'move') {
+      CROP.sel.x = Math.max(0, Math.min(CROP.orig.x + dx, CROP.dispW - CROP.sel.s));
+      CROP.sel.y = Math.max(0, Math.min(CROP.orig.y + dy, CROP.dispH - CROP.sel.s));
+    } else {
+      // 拖右下角调大小：始终正方形，不能拖出图片边界
+      CROP.sel.s = Math.max(24, Math.min(CROP.orig.s + Math.max(dx, dy), CROP.dispW - CROP.orig.x, CROP.dispH - CROP.orig.y));
+    }
+    applyCropSel();
+  });
+  window.addEventListener('pointerup', function () { CROP.dragging = null; });
+  $('cropOk').onclick = doCrop;
+  $('cropCancel').onclick = function () { mask('cropMask', false); };
+}
+
+/** 按选框把原图截成正方形 data URI（保持原格式：JPEG 存 JPEG，其余按 PNG 保透明） */
+function doCrop() {
+  var scale = CROP.natW / CROP.dispW;
+  var sx = Math.round(CROP.sel.x * scale), sy = Math.round(CROP.sel.y * scale);
+  var ss = Math.round(CROP.sel.s * scale);
+  ss = Math.max(1, Math.min(ss, CROP.natW - sx, CROP.natH - sy));
+  var cv = document.createElement('canvas');
+  cv.width = ss; cv.height = ss;
+  cv.getContext('2d').drawImage($('cropImg'), sx, sy, ss, ss, 0, 0, ss, ss);
+  S.draft[CROP.field] = cv.toDataURL(/^data:image\/jpe?g/.test(CROP.uri) ? 'image/jpeg' : 'image/png', 0.92);
+  updateThumbs(); updateSizeTip(); renderPreview();
+  mask('cropMask', false);
 }
 
 function bindSkin() {
@@ -766,6 +950,8 @@ function bindSkin() {
     (function (inputId, field) {
       $(inputId).onchange = function () {
         readFile(this, function (uri) {
+          // 键背景 / 音符 / 击中后：必须严格 1:1，不合规则让用户在原图里截取正方形
+          if (field === 'keyBg' || field === 'note' || field === 'hit') { requireSquare(field, uri); return; }
           S.draft[field] = uri;
           updateThumbs(); updateSizeTip(); renderPreview();
         });
@@ -775,10 +961,28 @@ function bindSkin() {
   var clears = document.querySelectorAll('[data-clear]');
   for (var i = 0; i < clears.length; i++) {
     clears[i].onclick = function () {
-      S.draft[this.getAttribute('data-clear')] = null;
+      var f = this.getAttribute('data-clear');
+      S.draft[f] = null;
+      // 清除背景/键背景时把配套颜色也一并清掉（恢复默认空白）
+      if (f === 'bg') { S.draft.bgColor = null; $('colorBg').value = '#f7f7f5'; }
+      if (f === 'keyBg') { S.draft.keyBgColor = null; $('colorKeyBg').value = '#ffffff'; }
       updateThumbs(); updateSizeTip(); renderPreview();
     };
   }
+  // 「无色」：只去掉颜色，不动图片
+  var clearColor = { bgColor: ['colorBg', '#f7f7f5'], keyBgColor: ['colorKeyBg', '#ffffff'] };
+  var ccb = document.querySelectorAll('[data-clearcolor]');
+  for (var c1 = 0; c1 < ccb.length; c1++) {
+    ccb[c1].onclick = function () {
+      var f = this.getAttribute('data-clearcolor');
+      S.draft[f] = null;
+      $(clearColor[f][0]).value = clearColor[f][1];
+      renderPreview();
+    };
+  }
+  // 颜色选择：即时生效（可与图片叠加：透明 PNG 下方露出的就是这层颜色）
+  $('colorBg').oninput = function () { S.draft.bgColor = this.value; renderPreview(); };
+  $('colorKeyBg').oninput = function () { S.draft.keyBgColor = this.value; renderPreview(); };
   var plays = document.querySelectorAll('[data-play]');
   for (var j = 0; j < plays.length; j++) {
     plays[j].onclick = function () {
@@ -811,9 +1015,13 @@ function bindSkin() {
   };
   $('skinClose').onclick = function () { mask('skinMask', false); };
   $('plazaClose').onclick = function () { mask('plazaMask', false); };
+  bindCropEvents();   // 1:1 裁剪弹窗的拖拽/按钮（只绑一次）
 }
 
-function bindBoard() { bindBoardChips(); }
+function bindBoard() {
+  bindBoardChips();
+  $('bdClose').onclick = function () { mask('detailMask', false); };
+}
 
 /* ================= 键盘 / 指针 ================= */
 function inTextInput(e) {
@@ -823,18 +1031,20 @@ function inTextInput(e) {
 function bindInput() {
   document.addEventListener('keydown', function (e) {
     if (inTextInput(e)) return;
-    // 结算界面：R 重开
-    if ($('resultMask').style.display !== 'none' && e.key.toLowerCase() === 'r') {
-      mask('resultMask', false); startGame(); return;
-    }
+    var rk = S.restartKey || 'KeyR';
+    var trackIdx = trackCodes(S.keys).indexOf(e.code);
+    var isRestart = e.code === rk && trackIdx === -1;   // 轨道键永远优先，重开键不允许抢轨道键
+    // 结算界面：按重来键直接再开一局
+    if ($('resultMask').style.display !== 'none' && isRestart) { quickRestart(); return; }
     if (!$('scr-game') || $('scr-game').style.display === 'none') return;
     if (e.repeat) return;                          // 长按/连发不算——否则自动重复会被当成连击，出现"莫名其妙失败"
     if (!G || G.over) return;
+    // 轨道键优先：5K 的中间轨本身就是空格，不能先被"空格=暂停"截走
+    if (trackIdx !== -1 && $('pauseOverlay').style.display === 'none') { e.preventDefault(); handleHit(trackIdx); return; }
+    // 一键重来：对局中随时生效（暂停里也行）
+    if (isRestart) { e.preventDefault(); quickRestart(); return; }
     if ($('pauseOverlay').style.display !== 'none') { e.preventDefault(); togglePause(false); return; }
     if (e.code === 'Escape') { e.preventDefault(); togglePause(); return; }
-    // 轨道键优先：5K 的中间轨本身就是空格，不能先被"空格=暂停"截走
-    var track = trackCodes(S.keys).indexOf(e.code);
-    if (track !== -1) { e.preventDefault(); handleHit(track); return; }
     if (e.code === 'Space') { e.preventDefault(); togglePause(); }
   });
   $('gameViewport').addEventListener('pointerdown', function (e) {
@@ -902,13 +1112,15 @@ function captureKey(btn) {
   });
 }
 
-/* ================= 菜单背景：游戏画面 ================= */
+/* ================= 菜单背景：按真实游戏画面摆（网格音符 + 判定线 + 键位字母） ================= */
 function buildMenuBg() {
   var bg = $('menuBg');
   bg.innerHTML = '';
   var k = 6;
   var w = bg.clientWidth || window.innerWidth;
+  var h = bg.clientHeight || window.innerHeight;
   var laneW = w / k;
+  // 轨道分隔线
   for (var i = 0; i < k; i++) {
     var lane = document.createElement('div');
     lane.className = 'mb-lane';
@@ -916,19 +1128,33 @@ function buildMenuBg() {
     lane.style.width = laneW + 'px';
     bg.appendChild(lane);
   }
-  var h = bg.clientHeight || window.innerHeight;
-  var cell = Math.max(56, Math.min(laneW, h / 8));
+  // 底部：判定线 + 键位字母（跟游戏里一样）
+  var judgeH = 76;
+  var judge = document.createElement('div');
+  judge.className = 'mb-judge';
+  judge.style.bottom = judgeH + 'px';
+  bg.appendChild(judge);
+  var labels = ['D', 'F', 'J', 'K', 'L', ';'];
   for (var c = 0; c < k; c++) {
-    var n = 2 + Math.floor(Math.random() * 2);
-    for (var r = 0; r < n; r++) {
-      var note = document.createElement('div');
-      note.className = 'mb-note';
-      note.style.left = (c * laneW + 3) + 'px';
-      note.style.width = (laneW - 6) + 'px';
-      note.style.height = (cell - 6) + 'px';
-      note.style.top = Math.floor(Math.random() * (h - cell)) + 'px';
-      bg.appendChild(note);
-    }
+    var kb = document.createElement('span');
+    kb.className = 'mb-key';
+    kb.style.left = (c * laneW) + 'px';
+    kb.style.width = laneW + 'px';
+    kb.textContent = labels[c] || '';
+    bg.appendChild(kb);
+  }
+  // 音符：每行只在随机一条轨道放一块，行高 = 轨道宽（正方形，和游戏一致），只铺到判定线上
+  var cell = Math.max(56, Math.min(laneW, h / 8));
+  var rows = Math.max(1, Math.ceil((h - judgeH) / cell));
+  for (var r = 0; r < rows; r++) {
+    var t = Math.floor(Math.random() * k);
+    var note = document.createElement('div');
+    note.className = 'mb-note';
+    note.style.left = (t * laneW) + 'px';
+    note.style.width = laneW + 'px';
+    note.style.height = cell + 'px';
+    note.style.top = (r * cell) + 'px';
+    bg.appendChild(note);
   }
 }
 
@@ -936,11 +1162,13 @@ function buildMenuBg() {
 function boot() {
   S.layout = loadLayout();
   S.skin = loadJson('dili.skin.current', null);
+  S.restartKey = loadJson('dili.restartKey', 'KeyR') || 'KeyR';
   initNet();
   bindMenu(); bindLayout(); bindSkin(); bindBoard(); bindInput();
   $('btnSettings').onclick = WB.ui.openSettings;
   refreshSkinNowLine();
   renderKeyHint();
+  refreshRestartUI();
   window.addEventListener('wb:settings', renderKeyHint);
   buildMenuBg();
   window.addEventListener('resize', function () { buildMenuBg(); });

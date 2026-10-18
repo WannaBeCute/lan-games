@@ -22,6 +22,7 @@ const crypto = require('crypto');
 const ws = require('./ws');
 const Friends = require('./friends.cjs');
 const Chat = require('./chat.cjs');
+const NameRegistry = require('./name-registry.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');            // 仓库根
 const WEB_DIR = path.join(ROOT, 'platform', 'web');          // 平台前端（主页 + 通用库）
@@ -246,6 +247,7 @@ console.log('[platform] 已装配好友系统（' + Object.keys(Friends.routes).
 
 /* 频道聊天：房间内所有人可见的公共聊天（频道是临时的，房间没了就回收） */
 const chat = new Chat(ctx);
+const nameRegistry = new NameRegistry();   // 名字全服独占（先到先得），落盘可查
 for (const type of Object.keys(Chat.routes)) {
   const method = Chat.routes[type];
   routes.set(type, (client, msg) => chat[method](client, msg));
@@ -417,6 +419,15 @@ function eachHub(fn) {
   for (const g of games) { try { fn(g.hub, g); } catch (e) { console.error('[' + g.name + ']', e.message); } }
 }
 
+/** 想要的名字被占用时，给这台电脑分配一个不冲突的随机兜底名（玩家XXX） */
+function allocFallbackName(ip) {
+  for (let i = 0; i < 60; i++) {
+    const cand = '玩家' + (100 + Math.floor(Math.random() * 900));
+    if (nameRegistry.available(cand, ip)) return cand;
+  }
+  return '玩家' + Math.floor(Math.random() * 90000);   // 理论上到不了这里
+}
+
 function handleMessage(client, msg) {
   if (!msg || typeof msg !== 'object') return;
 
@@ -426,9 +437,25 @@ function handleMessage(client, msg) {
   /* 通用：握手 / 改名（改名要通知每个游戏刷新显示名） */
   if (msg.t === 'hello') {
     if (typeof msg.name === 'string') {
-      const next = msg.name.slice(0, 12).trim();
+      const wanted = msg.name.slice(0, 12).trim();
+      let next = wanted;
+      /*
+       * 名字全服独占：被别的电脑注册过的名字不能用。
+       * 拒掉之后给这台电脑分配一个不冲突的随机兜底名，客户端会弹提示引导去设置里改名。
+       */
+      if (next && !nameRegistry.available(next, client.ip)) {
+        const rejected = next;
+        next = allocFallbackName(client.ip);
+        send(client, {
+          t: 'name.reject', name: rejected, assigned: next,
+          msg: '名字「' + rejected + '」已被其他玩家使用，已临时使用「' + next + '」，请在设置里换一个名字'
+        });
+        console.log('[name] 「' + rejected + '」已被 ' + nameRegistry.ownerIp(rejected) + ' 使用，'
+          + client.ip + ' 改用兜底名「' + next + '」');
+      }
       if (next && next !== client.name) {
         client.name = next;
+        nameRegistry.register(client.name, client.ip);
         eachHub((hub) => { if (hub.onRename) hub.onRename(client); });
       }
     }
@@ -570,7 +597,89 @@ setInterval(() => {
  *    /notice 公告内容   发全服公告（顶栏中间滚动显示，常驻不自动消失，可手关）
  *    /update           载入项目改动：新游戏当场装配，页面改动玩家刷新即生效，
  *                      已在进行的房间全部保留；完成后自动发一条「当前服务器已更新」
+ *    /info 玩家名|IP   查玩家对应的 IP；查 IP 则列出它用过哪些名字
+ *    /chat 玩家名|IP   查该玩家近三天的对话；末尾加 -a 或 -all 查全部
+ *    /help             命令帮助
  * ============================================================ */
+const HELP_TEXT = [
+  '可用命令：',
+  '  /info 玩家名或IP    查玩家对应的 IP；若输入的是 IP，则列出它用过的所有名字',
+  '  /chat 玩家名或IP    查看该玩家近三天的对话；末尾加 -a 或 -all 查看全部对话',
+  '  /notice 公告内容    发全服公告',
+  '  /update             载入项目改动（保留进行中的房间）',
+  '  /help               显示本帮助'
+].join('\n');
+
+const HELP_USAGE = '输入 /help 查看全部命令';
+
+/** 控制台里把「玩家名 / IP」统一解析成 IP（IP 直接用；名字走注册表和好友昵称表） */
+function resolveTargetIp(token) {
+  const s = String(token || '').trim();
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return s;
+  const byRegistry = nameRegistry.ownerIp(s);
+  if (byRegistry) return byRegistry;
+  for (const [ip, n] of friends.names) {          // 好友昵称表兜底（老数据里也有名字）
+    if (n === s) return ip;
+  }
+  return null;
+}
+
+function fmtCmdTime(ts) {
+  const d = new Date(ts || 0);
+  return ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2) + ' '
+    + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+
+function cmdInfo(arg) {
+  if (!arg) { console.log('用法：/info 玩家名 或 /info IP'); return; }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(arg)) {
+    const rec = friends.online.get(arg);
+    const latest = friends.names.get(arg) || '';
+    const names = nameRegistry.namesOfIp(arg);
+    console.log('IP ' + arg + '：' + (rec ? '在线，当前名「' + (rec.name || latest || '?') + '」' : '离线')
+      + (latest ? '，最近昵称「' + latest + '」' : ''));
+    if (names.length) {
+      console.log('  用过的名字：' + names.map(n => n.name + '（' + fmtCmdTime(n.ts) + ' 登记）').join('、'));
+    } else if (!latest) {
+      console.log('  （没有查到这个名字记录）');
+    }
+    return;
+  }
+  const ip = resolveTargetIp(arg);
+  if (!ip) { console.log('查不到玩家「' + arg + '」（该名字未被占用或没登记过）'); return; }
+  const rec = friends.online.get(ip);
+  console.log('玩家「' + arg + '」的 IP：' + ip + (rec ? '（在线）' : '（离线）'));
+}
+
+function cmdChat(arg) {
+  if (!arg) { console.log('用法：/chat 玩家名或IP [-a|-all]'); return; }
+  const parts = arg.split(/\s+/).filter(Boolean);
+  const token = parts[0];
+  const all = parts.slice(1).some(p => p === '-a' || p === '-all');
+  const ip = resolveTargetIp(token);
+  if (!ip) { console.log('查不到玩家「' + token + '」（该名字未被占用或没登记过）'); return; }
+  // 数据源 = 好友私聊（落盘，含两端会话）+ 当前活跃频道的聊天
+  let list = [];
+  for (const [key, entries] of friends.chats) {
+    if (key.split('|').indexOf(ip) === -1) continue;
+    list = list.concat(entries);
+  }
+  list = list.concat(chat.logsOf(ip));
+  list.sort((a, b) => a.ts - b.ts);
+  if (!all) {
+    const since = Date.now() - 3 * 24 * 3600 * 1000;
+    list = list.filter(e => e.ts >= since);
+  }
+  if (!list.length) {
+    console.log('「' + ip + '」' + (all ? '没有聊天记录' : '近三天没有聊天记录') + '（活跃房间的临时聊天只在房间存在期间可查）');
+    return;
+  }
+  console.log('玩家「' + token + '」(' + ip + ') 的' + (all ? '全部' : '近三天') + '对话，共 ' + list.length + ' 条：');
+  for (const e of list) {
+    console.log('  [' + fmtCmdTime(e.ts) + '] ' + (e.name || e.from) + ' (' + e.from + ')：' + e.text);
+  }
+}
+
 if (process.stdin.isTTY) {
   const readline = require('readline');
   const rl = readline.createInterface({ input: process.stdin });
@@ -590,7 +699,10 @@ if (process.stdin.isTTY) {
       else console.log('[notice] 用法：/notice 公告内容');
       return;
     }
-    console.log('  未知命令「' + s + '」。可用命令：/notice 公告内容 、/update');
+    if (s === '/help') { console.log(HELP_TEXT); return; }
+    if (s === '/info' || s.indexOf('/info ') === 0) { cmdInfo(s.slice('/info'.length).trim()); return; }
+    if (s === '/chat' || s.indexOf('/chat ') === 0) { cmdChat(s.slice('/chat'.length).trim()); return; }
+    console.log('  未知命令「' + s + '」。' + HELP_USAGE);
   });
 }
 
@@ -637,7 +749,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('  数据存储位置：' + Friends.DATA_FILE);
   console.log('      （各 IP 的昵称 / 好友关系 / 聊天记录都存在这里，重启服务器不丢）');
   console.log('');
-  console.log('  本窗口可输入命令（回车生效）：/notice 公告内容 发全服公告；/update 载入项目改动（保留房间）');
+  console.log('  本窗口可输入命令（回车生效，/help 看全部）：');
+  console.log('      /info 玩家名或IP    查玩家 IP / 查 IP 用过的名字');
+  console.log('      /chat 玩家名或IP    查近三天对话（加 -a 查全部）');
+  console.log('      /notice 公告内容    发全服公告；/update 载入项目改动（保留房间）');
   console.log('');
   console.log('  关闭本窗口 或按 Ctrl+C 即可停止服务');
   console.log('');

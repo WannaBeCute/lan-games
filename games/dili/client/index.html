@@ -72,7 +72,11 @@
       <!-- 侧栏：排行榜（实时） -->
       <aside class="menu-side">
         <div class="side-panel">
-          <h3>排行榜 <span class="dim small">实时</span></h3>
+          <h3>排行榜 <span class="dim small">实时 · 点击行看详情</span></h3>
+          <div class="chip-row small-chips" id="boardScope">
+            <button class="chip on" data-scope="all">全服</button>
+            <button class="chip" data-scope="local">本地</button>
+          </div>
           <div class="chip-row small-chips" id="boardKeys">
             <button class="chip on" data-bkeys="4">4K</button>
             <button class="chip" data-bkeys="5">5K</button>
@@ -115,6 +119,7 @@
         <span class="hud-timer" id="hudTimer">20.00</span>
         <span class="hud-chip">得分 <b id="hudScore">0</b></span>
         <span class="hud-chip" id="hudCps">0.00 CPS</span>
+        <span class="hud-chip hud-restart" id="hudRestart" title="按 R 立即重开一局">⟳ R 重来</span>
         <button class="btn tiny ghost" id="btnPause">⏸ 暂停</button>
         <button class="btn tiny ghost" id="btnQuit">退出</button>
       </div>
@@ -128,7 +133,7 @@
         <div>
           <h2 id="readyTitle">准备好了吗？</h2>
           <div class="ready-keys" id="readyKeys"></div>
-          <p class="dim">音符落到最下面一行时，按下它所在轨道的键 —— 按下第一颗键开始计时</p>
+          <p class="dim">音符落到最下面一行时，按下它所在轨道的键 —— 按下第一颗键开始计时 · <span id="readyRestart"></span></p>
         </div>
       </div>
     </div>
@@ -157,6 +162,45 @@
   </div>
 </div>
 
+<!-- ============ 图片 1:1 裁剪 ============ -->
+<div class="wb-mask" id="cropMask" style="display:none">
+  <div class="wb-dialog dili-dialog crop-dialog">
+    <h3>裁剪为 1:1 正方形</h3>
+    <p class="dim small">该素材必须是严格 1:1 —— 拖动选框选位置，拖右下角圆点调大小，确认后截取。</p>
+    <div class="crop-stage" id="cropStage">
+      <img id="cropImg" alt="">
+      <div class="crop-sel" id="cropSel"><span class="crop-handle" id="cropHandle"></span></div>
+    </div>
+    <div class="btn-row center">
+      <button class="btn ghost" id="cropCancel">取消</button>
+      <button class="btn primary" id="cropOk">确认截取</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 排行榜成绩详情 ============ -->
+<div class="wb-mask" id="detailMask" style="display:none">
+  <div class="wb-dialog dili-dialog detail-dialog">
+    <h3>成绩详情</h3>
+    <p class="bd-head" id="bdHead">--</p>
+    <div class="bd-grid">
+      <div><em>名次</em><b id="bdRank">--</b></div>
+      <div><em>成绩</em><b id="bdScore">--</b></div>
+      <div><em>平均 CPS</em><b id="bdCps">--</b></div>
+      <div><em>用时</em><b id="bdTime">--</b></div>
+      <div><em>按错</em><b id="bdErr">--</b></div>
+      <div><em>点赞</em><b id="bdLikes">--</b></div>
+      <div><em>创造时间</em><b id="bdDate">--</b></div>
+      <div><em>趋势（48h）</em><b id="bdTrend">--</b></div>
+      <div><em>玩家 IP（局域网）</em><b id="bdIp">--</b></div>
+    </div>
+    <p class="dim small">IP 用来在局域网里认人：同一台电脑的成绩都算在这一个 IP 下。</p>
+    <div class="btn-row center">
+      <button class="btn ghost" id="bdClose">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ 布局调整 ============ -->
 <div class="wb-mask" id="layoutMask" style="display:none">
   <div class="wb-dialog dili-dialog">
@@ -179,6 +223,10 @@
         <span class="dim small">在右上角「⚙ 设置 → 键位 → 底力练习器」里调整对应键数的按键</span>
       </label>
       <label class="chk"><input type="checkbox" id="layShowKeys" checked> 在判定线上显示键位字母</label>
+      <label>一键重来键（当前 <b id="valRestartKey">R</b>）
+        <span class="dim small" style="display:block;margin:4px 0">游戏里随时按下立即重开一局；点下面的键帽换成别的键</span>
+        <button type="button" class="key-btn" id="layRestartKey">R</button>
+      </label>
     </div>
     <p class="dim small" id="layParseTip" style="min-height:18px"></p>
     <div class="btn-row center">
@@ -198,14 +246,14 @@
         <label>皮肤名称 <input type="text" id="skinName" maxlength="20" placeholder="我的皮肤"></label>
         <div class="skin-field">
           <span class="sf-label">背景图片</span>
-          <span class="dim small sf-hint">默认：无（空白）· 支持透明背景 PNG</span>
-          <span class="sf-file"><input type="file" id="fileBg" accept="image/*"><button class="btn tiny ghost" data-clear="bg">清除</button></span>
+          <span class="dim small sf-hint">默认：无（空白）· 支持透明背景 PNG · 可只设纯色</span>
+          <span class="sf-file"><input type="file" id="fileBg" accept="image/*"><input type="color" id="colorBg" value="#f7f7f5" title="设置背景颜色"><button class="btn tiny ghost" data-clearcolor="bgColor" title="去掉背景颜色">无色</button><button class="btn tiny ghost" data-clear="bg">清除</button></span>
           <img class="sf-thumb" id="thumbBg" style="display:none">
         </div>
         <div class="skin-field">
           <span class="sf-label">键背景</span>
-          <span class="dim small sf-hint">每条轨道的底图，默认：无（空白）</span>
-          <span class="sf-file"><input type="file" id="fileKeyBg" accept="image/*"><button class="btn tiny ghost" data-clear="keyBg">清除</button></span>
+          <span class="dim small sf-hint">每条轨道的底图，默认：无（空白）· 可只设纯色</span>
+          <span class="sf-file"><input type="file" id="fileKeyBg" accept="image/*"><input type="color" id="colorKeyBg" value="#ffffff" title="设置键背景颜色"><button class="btn tiny ghost" data-clearcolor="keyBgColor" title="去掉键背景颜色">无色</button><button class="btn tiny ghost" data-clear="keyBg">清除</button></span>
           <img class="sf-thumb" id="thumbKeyBg" style="display:none">
         </div>
         <div class="skin-field">
